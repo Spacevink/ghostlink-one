@@ -18,9 +18,8 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (!canvasRef.current) return
-    let cleanup: (() => void) | undefined
-    buildScene(canvasRef.current).then(fn => { cleanup = fn })
-    return () => cleanup?.()
+    const cleanup = buildScene(canvasRef.current)
+    return () => cleanup()
   }, [])
 
   const handleLogin = async () => {

@@ -45,9 +45,8 @@ export default function PortalPage() {
 
   useEffect(() => {
     if (!canvasRef.current) return
-    let cleanup: (() => void) | undefined
-    buildScene(canvasRef.current).then(fn => { cleanup = fn })
-    return () => cleanup?.()
+    const cleanup = buildScene(canvasRef.current)
+    return () => cleanup()
   }, [])
 
   const initials = user?.user_metadata?.full_name

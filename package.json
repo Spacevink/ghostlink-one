@@ -12,7 +12,9 @@
     "react": "^18",
     "react-dom": "^18",
     "@supabase/supabase-js": "^2",
-    "@supabase/ssr": "^0.5"
+    "@supabase/ssr": "^0.5",
+    "three": "^0.160.0",
+    "@types/three": "^0.160.0"
   },
   "devDependencies": {
     "typescript": "^5",

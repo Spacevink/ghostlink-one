@@ -2,7 +2,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createClient, Project } from '../../lib/supabase'
 import { useRouter } from 'next/navigation'
-import styles from './portal.module.css'
 
 export default function PortalPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -10,147 +9,143 @@ export default function PortalPage() {
   const router = useRouter()
   const [projects, setProjects] = useState<Project[]>([])
   const [user, setUser] = useState<any>(null)
-  const [showAddModal, setShowAddModal] = useState(false)
-  const [newProject, setNewProject] = useState({ name: '', description: '', subdomain: '', repo_url: '', icon: '⚡', color: '#2ad7ff' })
+  const [showModal, setShowModal] = useState(false)
+  const [form, setForm] = useState({ name: '', description: '', subdomain: '', repo_url: '', icon: '⚡' })
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
-      if (!data.user) { router.push('/'); return }
-      setUser(data.user)
-      loadProjects()
+      if (!data.user) { router.replace('/'); return }
+      setUser(data.user); loadProjects()
     })
   }, [])
 
   async function loadProjects() {
-    const { data } = await supabase.from('projects').select('*').order('created_at', { ascending: true })
+    const { data } = await supabase.from('projects').select('*').order('created_at')
     setProjects(data || [])
   }
 
   async function addProject() {
+    if (!form.name) return
     setSaving(true)
     const { data: { user } } = await supabase.auth.getUser()
-    await supabase.from('projects').insert({ ...newProject, owner_id: user!.id, status: 'active' })
-    setSaving(false)
-    setShowAddModal(false)
-    setNewProject({ name: '', description: '', subdomain: '', repo_url: '', icon: '⚡', color: '#2ad7ff' })
+    await supabase.from('projects').insert({ ...form, owner_id: user!.id, status: 'active' })
+    setSaving(false); setShowModal(false)
+    setForm({ name: '', description: '', subdomain: '', repo_url: '', icon: '⚡' })
     loadProjects()
   }
 
-  async function signOut() {
-    await supabase.auth.signOut()
-    router.push('/')
-  }
+  async function signOut() { await supabase.auth.signOut(); router.replace('/') }
 
   useEffect(() => {
-    let animId: number
-    const script = document.createElement('script')
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js'
-    script.onload = () => initScene()
-    document.head.appendChild(script)
-    function initScene() {
-      const THREE = (window as any).THREE
-      const canvas = canvasRef.current!
-      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true })
-      renderer.setPixelRatio(window.devicePixelRatio)
-      renderer.setSize(window.innerWidth, window.innerHeight)
+    let animId: number, disposed = false
+    async function init() {
+      const THREE = await import('three')
+      const { EffectComposer } = await import('three/addons/postprocessing/EffectComposer.js' as any)
+      const { RenderPass } = await import('three/addons/postprocessing/RenderPass.js' as any)
+      const { UnrealBloomPass } = await import('three/addons/postprocessing/UnrealBloomPass.js' as any)
+      if (disposed || !canvasRef.current) return
+      const canvas = canvasRef.current
+      const W = window.innerWidth, H = window.innerHeight
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); renderer.setSize(W, H)
+      renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.2
       const scene = new THREE.Scene()
-      const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000)
-      camera.position.set(0, 1.5, 0)
-      camera.lookAt(0, 1.2, -20)
-      const TRAILS = 8, TRAIL_LENGTH = 120
-      const trails: any[] = []
-      for (let t = 0; t < TRAILS; t++) {
-        const offset = (t - TRAILS / 2) * 0.6
-        const speedMult = 0.4 + Math.random() * 0.6
-        const hue = t % 2 === 0 ? 0.55 : 0.85
-        const color = new THREE.Color().setHSL(hue, 1, 0.6)
-        const positions = new Float32Array(TRAIL_LENGTH * 3)
-        const geometry = new THREE.BufferGeometry()
-        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-        scene.add(new THREE.Line(geometry, new THREE.LineBasicMaterial({ color, linewidth: 2 })))
-        trails.push({ offset, speedMult, positions, geometry, t: Math.random() * 100 })
+      const camera = new THREE.PerspectiveCamera(55, W / H, 0.1, 2000)
+      camera.position.set(0, 2.2, 6); camera.lookAt(0, 1.5, -30)
+      const composer = new EffectComposer(renderer)
+      composer.addPass(new RenderPass(scene, camera))
+      const bloom = new UnrealBloomPass(new THREE.Vector2(W, H), 1.6, 0.5, 0.05)
+      composer.addPass(bloom)
+      const TRAILS = 10, SEG = 180; const trails: any[] = []
+      for (let i = 0; i < TRAILS; i++) {
+        const isLeft = i % 2 === 0, isHead = i < 4
+        const col = isHead ? new THREE.Color(isLeft ? 0xcfe3ff : 0xf4faff) : new THREE.Color(isLeft ? 0xff3340 : 0xff5555)
+        const positions = new Float32Array(SEG * 3), geo = new THREE.BufferGeometry()
+        geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+        scene.add(new THREE.Line(geo, new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: 0.9 })))
+        trails.push({ positions, geo, laneOffset: (i - TRAILS/2)*0.55+(isLeft?-0.15:0.15), speed: 0.3+Math.random()*0.5, phase: Math.random()*Math.PI*2, t: Math.random()*60 })
       }
-      function getPoint(t: number, offset: number) {
-        return { x: offset + Math.sin(t * 0.18) * 3.5 + Math.sin(t * 0.07) * 2, y: 0.05 + Math.abs(Math.sin(t * 0.12)) * 0.3, z: -t * 1.2 }
-      }
+      function getPoint(t: number, lane: number, phase: number) { return { x: lane+Math.sin(t*0.14+phase)*2.8+Math.sin(t*0.06+phase*0.5)*1.4, y: 0.1+Math.abs(Math.sin(t*0.1+phase))*0.25, z: -t*1.6 } }
       function animate() {
         animId = requestAnimationFrame(animate)
-        trails.forEach(trail => {
-          trail.t += 0.015 * trail.speedMult
-          for (let i = 0; i < TRAIL_LENGTH; i++) {
-            const p = getPoint(trail.t + i * 0.3, trail.offset)
-            trail.positions[i * 3] = p.x; trail.positions[i * 3 + 1] = p.y; trail.positions[i * 3 + 2] = p.z
-          }
-          trail.geometry.attributes.position.needsUpdate = true
-        })
-        renderer.render(scene, camera)
+        trails.forEach(tr => { tr.t+=0.012*tr.speed; for(let i=0;i<SEG;i++){const p=getPoint(tr.t+i*0.28,tr.laneOffset,tr.phase);tr.positions[i*3]=p.x;tr.positions[i*3+1]=p.y;tr.positions[i*3+2]=p.z} tr.geo.attributes.position.needsUpdate=true })
+        composer.render()
       }
       animate()
-      window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight) })
+      window.addEventListener('resize',()=>{const w=window.innerWidth,h=window.innerHeight;camera.aspect=w/h;camera.updateProjectionMatrix();renderer.setSize(w,h);composer.setSize(w,h)})
     }
-    return () => cancelAnimationFrame(animId)
+    init(); return () => { disposed=true; cancelAnimationFrame(animId) }
   }, [])
 
-  const avatar = user?.user_metadata?.avatar_url
-  const displayName = user?.user_metadata?.full_name || user?.email
+  const initials = user?.user_metadata?.full_name?.split(' ').map((n:string)=>n[0]).join('').slice(0,2)||user?.email?.[0]?.toUpperCase()||'G'
+  const avatarImg = user?.user_metadata?.avatar_url
 
   return (
-    <div className={styles.root}>
-      <canvas ref={canvasRef} className={styles.canvas} />
-      <div className={styles.ui}>
-        <header className={styles.header}>
-          <div className={styles.wordmark}>GHOSTLINK</div>
-          <div className={styles.headerRight}>
-            <span className={styles.slotCount}>{projects.length} project{projects.length !== 1 ? 's' : ''}</span>
-            {avatar ? <img src={avatar} alt="" className={styles.avatar} /> : <div className={styles.avatarFallback}>{displayName?.[0]}</div>}
-            <button className={styles.signOut} onClick={signOut}>Sign out</button>
-          </div>
-        </header>
-        <main className={styles.main}>
-          <h1 className={styles.title}>Your projects</h1>
-          <div className={styles.grid}>
-            {projects.map(p => (<ProjectCard key={p.id} project={p} />))}
-            <button className={styles.addCard} onClick={() => setShowAddModal(true)}>
-              <span className={styles.addIcon}>+</span>
-              <span>Add project</span>
-            </button>
-          </div>
-        </main>
-      </div>
-      {showAddModal && (
-        <div className={styles.modalBackdrop} onClick={() => setShowAddModal(false)}>
-          <div className={styles.modal} onClick={e => e.stopPropagation()}>
-            <h2 className={styles.modalTitle}>New project</h2>
-            <label className={styles.label}>Name<input className={styles.input} value={newProject.name} onChange={e => setNewProject(p => ({...p, name: e.target.value}))} placeholder="My App" /></label>
-            <label className={styles.label}>Description<input className={styles.input} value={newProject.description} onChange={e => setNewProject(p => ({...p, description: e.target.value}))} placeholder="What does it do?" /></label>
-            <label className={styles.label}>Subdomain <span className={styles.muted}>.ghostlink.one</span><input className={styles.input} value={newProject.subdomain} onChange={e => setNewProject(p => ({...p, subdomain: e.target.value}))} placeholder="myapp" /></label>
-            <label className={styles.label}>GitHub repo URL<input className={styles.input} value={newProject.repo_url} onChange={e => setNewProject(p => ({...p, repo_url: e.target.value}))} placeholder="https://github.com/..." /></label>
-            <div className={styles.row}>
-              <label className={styles.label}>Icon<input className={styles.input} value={newProject.icon} onChange={e => setNewProject(p => ({...p, icon: e.target.value}))} placeholder="⚡" style={{ width: 60 }} /></label>
-              <label className={styles.label}>Accent color<input type="color" className={styles.colorPicker} value={newProject.color} onChange={e => setNewProject(p => ({...p, color: e.target.value}))} /></label>
+    <>
+      <canvas ref={canvasRef} id="bg" />
+      <div style={{ position:'fixed', inset:0, zIndex:1 }}>
+        <div className="stage">
+          <div className="topbar glass" style={{ borderBottom:'1px solid var(--edge)' }}>
+            <div className="brand">
+              <div className="brand__mark"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2L14 6v4L8 14 2 10V6L8 2z" fill="currentColor"/></svg></div>
+              <span className="brand__name">Ghostlink</span><span className="brand__dot">.one</span>
             </div>
-            <div className={styles.modalActions}>
-              <button className={styles.cancelBtn} onClick={() => setShowAddModal(false)}>Cancel</button>
-              <button className={styles.saveBtn} onClick={addProject} disabled={!newProject.name || saving}>{saving ? 'Saving…' : 'Create project'}</button>
+            <div className="topbar__right">
+              <span className="chip">{projects.length} project{projects.length!==1?'s':''}</span>
+              {avatarImg?<img src={avatarImg} alt="" style={{width:38,height:38,borderRadius:'50%',border:'2px solid var(--edge-strong)',boxShadow:'0 0 18px var(--glow)'}}/>:<div className="avatar">{initials}</div>}
+              <button className="signout-btn" onClick={signOut}>Sign out</button>
+            </div>
+          </div>
+          <div className="portal">
+            <div className="portal__main">
+              <div className="portal__head">
+                <div className="eyebrow">Portal</div>
+                <div className="portal__title">Your projects</div>
+                <div className="portal__lead">Each project lives at its own subdomain with its own stack.</div>
+              </div>
+              <div className="grid">
+                {projects.map((p,i)=>{
+                  const url=p.subdomain?`https://${p.subdomain}.ghostlink.one`:p.repo_url||'#'
+                  return(
+                    <a key={p.id} className="widget glass" href={url} target="_blank" rel="noreferrer" style={{animationDelay:`${i*0.05}s`}}>
+                      <div className="widget__glow"/>
+                      <span className="widget__id mono">0{i+1}</span>
+                      <div style={{fontSize:32,marginBottom:4}}>{p.icon||'⚡'}</div>
+                      <div className="widget__label">{p.name}</div>
+                      {p.subdomain&&<div className="widget__sub">{p.subdomain}.ghostlink.one</div>}
+                      {p.description&&<div style={{fontSize:13,color:'var(--ink-3)',marginTop:2}}>{p.description}</div>}
+                    </a>
+                  )
+                })}
+                <button className="widget widget--outline" onClick={()=>setShowModal(true)} style={{cursor:'pointer',border:'none',background:'none'}}>
+                  <div className="widget__glow"/>
+                  <span className="widget__id mono">+{String(projects.length+1).padStart(2,'0')}</span>
+                  <div className="widget__plus">+</div>
+                  <div className="widget__label">New project</div>
+                  <div className="widget__sub">click to create</div>
+                </button>
+              </div>
             </div>
           </div>
         </div>
-      )}
-    </div>
-  )
-}
-
-function ProjectCard({ project }: { project: Project }) {
-  const url = project.subdomain ? `https://${project.subdomain}.ghostlink.one` : project.repo_url
-  return (
-    <a className={styles.card} href={url || '#'} target={url ? '_blank' : undefined} rel="noreferrer"
-       style={{ '--accent': project.color } as any}>
-      <div className={styles.cardIcon}>{project.icon || '⚡'}</div>
-      <div className={styles.cardName}>{project.name}</div>
-      {project.description && <div className={styles.cardDesc}>{project.description}</div>}
-      {project.subdomain && <div className={styles.cardUrl}>{project.subdomain}.ghostlink.one</div>}
-      <div className={styles.cardStatus} data-status={project.status}>{project.status}</div>
-    </a>
+        {showModal&&(
+          <div className="modal-backdrop" onClick={()=>setShowModal(false)}>
+            <div className="modal glass" onClick={e=>e.stopPropagation()}>
+              <div className="modal__title">New project</div>
+              <div className="field"><label>Project name</label><input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="My App"/></div>
+              <div className="field"><label>Description</label><input value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))} placeholder="What does it do?"/></div>
+              <div className="field"><label>Subdomain <span style={{color:'var(--ink-3)',textTransform:'none'}}>.ghostlink.one</span></label><input value={form.subdomain} onChange={e=>setForm(f=>({...f,subdomain:e.target.value}))} placeholder="myapp"/></div>
+              <div className="field"><label>GitHub repo URL</label><input value={form.repo_url} onChange={e=>setForm(f=>({...f,repo_url:e.target.value}))} placeholder="https://github.com/..."/></div>
+              <div className="field-row"><div className="field" style={{flex:1}}><label>Icon</label><input value={form.icon} onChange={e=>setForm(f=>({...f,icon:e.target.value}))} placeholder="⚡" style={{maxWidth:80}}/></div></div>
+              <div className="modal-actions">
+                <button className="btn btn--ghost" onClick={()=>setShowModal(false)}>Cancel</button>
+                <button className="btn btn--primary" onClick={addProject} disabled={!form.name||saving}>{saving?'Creating…':'Create project'}</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </>
   )
 }

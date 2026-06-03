@@ -1,11 +1,9 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createClient, Project } from '../../lib/supabase'
 import { useRouter } from 'next/navigation'
-import { buildScene } from '../../lib/scene'
 
 export default function PortalPage() {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
   const supabase = createClient()
   const router = useRouter()
   const [projects, setProjects] = useState<Project[]>([])
@@ -43,12 +41,6 @@ export default function PortalPage() {
     router.replace('/')
   }
 
-  useEffect(() => {
-    if (!canvasRef.current) return
-    const stop = buildScene(canvasRef.current)
-    return stop
-  }, [])
-
   const initials = user?.user_metadata?.full_name
     ?.split(' ').map((n: string) => n[0]).join('').slice(0, 2)
     || user?.email?.[0]?.toUpperCase() || 'G'
@@ -56,7 +48,11 @@ export default function PortalPage() {
 
   return (
     <>
-      <canvas ref={canvasRef} id="bg" />
+      <iframe
+        src="/bg.html"
+        style={{ position: 'fixed', inset: 0, width: '100%', height: '100%', border: 'none', zIndex: 0 }}
+        title="background"
+      />
       <div style={{ position: 'fixed', inset: 0, zIndex: 1 }}>
         <div className="stage">
           <div className="topbar glass" style={{ borderBottom: '1px solid var(--edge)' }}>

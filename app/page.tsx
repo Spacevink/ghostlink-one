@@ -1,11 +1,9 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createClient } from '../lib/supabase'
 import { useRouter } from 'next/navigation'
-import { buildScene } from '../lib/scene'
 
 export default function LoginPage() {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
   const router = useRouter()
   const supabase = createClient()
   const [authing, setAuthing] = useState(false)
@@ -14,12 +12,6 @@ export default function LoginPage() {
     supabase.auth.getUser().then(({ data }) => {
       if (data.user) router.replace('/portal')
     })
-  }, [])
-
-  useEffect(() => {
-    if (!canvasRef.current) return
-    const stop = buildScene(canvasRef.current)
-    return stop
   }, [])
 
   const handleLogin = async () => {
@@ -32,7 +24,11 @@ export default function LoginPage() {
 
   return (
     <>
-      <canvas ref={canvasRef} id="bg" />
+      <iframe
+        src="/bg.html"
+        style={{ position: 'fixed', inset: 0, width: '100%', height: '100%', border: 'none', zIndex: 0 }}
+        title="background"
+      />
       <div style={{ position: 'fixed', inset: 0, zIndex: 1 }}>
         <div className="login">
           <div className="login__card glass">
@@ -69,10 +65,7 @@ export default function LoginPage() {
                     { label: 'Connecting to Google', s: 'active' },
                     { label: 'Loading your portal', s: '' },
                   ].map((x, i) => (
-                    <li key={i} className={x.s}>
-                      <div className="auth__tick" />
-                      {x.label}
-                    </li>
+                    <li key={i} className={x.s}><div className="auth__tick" />{x.label}</li>
                   ))}
                 </ul>
               </div>

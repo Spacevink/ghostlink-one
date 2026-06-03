@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { margin: 0; padding: 0; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #04070f; }
+canvas { display: block; width: 100% !important; height: 100% !important; }
+</style>
+</head>
+<body>
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+<script>
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.setClearColor(0x04070f, 1);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 2000);
+camera.position.set(0, 2.2, 6);
+camera.lookAt(0, 1.5, -30);
+
+const TRAILS = 10, SEG = 180;
+const HEAD = [0xcfe3ff, 0xf4faff, 0xcfe3ff, 0xf4faff];
+const TAIL = [0xff3340, 0xff5555, 0xff3340, 0xff5555, 0xff3340, 0xff5555];
+const spreads = [0, 0.015, -0.015, 0.03, -0.03];
+const trails = [];
+
+for (let i = 0; i < TRAILS; i++) {
+  const isHead = i < 4;
+  const col = new THREE.Color(isHead ? HEAD[i % 4] : TAIL[(i - 4) % 6]);
+  const laneOffset = (i - TRAILS / 2) * 0.6 + (i % 2 === 0 ? -0.2 : 0.2);
+  const speed = 0.4 + Math.random() * 0.6;
+  const phase = Math.random() * Math.PI * 2;
+  const lineObjects = [];
+
+  for (const opac of [1.0, 0.6, 0.3, 0.15, 0.06]) {
+    const positions = new Float32Array(SEG * 3);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const mat = new THREE.LineBasicMaterial({
+      color: col, transparent: true, opacity: opac,
+      blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    scene.add(new THREE.Line(geo, mat));
+    lineObjects.push({ positions, geo });
+  }
+  trails.push({ laneOffset, speed, phase, t: Math.random() * 60, lineObjects });
+}
+
+function pt(t, lane, ph) {
+  return {
+    x: lane + Math.sin(t * 0.14 + ph) * 2.8 + Math.sin(t * 0.06 + ph * 0.5) * 1.4,
+    y: 0.1 + Math.abs(Math.sin(t * 0.1 + ph)) * 0.25,
+    z: -t * 1.6
+  };
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  for (const tr of trails) {
+    tr.t += 0.012 * tr.speed;
+    tr.lineObjects.forEach(({ positions, geo }, li) => {
+      const s = spreads[li] || 0;
+      for (let i = 0; i < SEG; i++) {
+        const p = pt(tr.t + i * 0.28, tr.laneOffset, tr.phase);
+        positions[i*3] = p.x + s;
+        positions[i*3+1] = p.y + s * 0.5;
+        positions[i*3+2] = p.z;
+      }
+      geo.attributes.position.needsUpdate = true;
+    });
+  }
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>

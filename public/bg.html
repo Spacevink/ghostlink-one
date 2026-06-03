@@ -17,81 +17,162 @@ canvas { display: block; }
 </script>
 </head>
 <body>
+<canvas id="bg" style="position:fixed;inset:0;width:100%;height:100%;"></canvas>
 <script type="module">
+// Bloom Traffic Zone — exact original scene from Claude Design
+// LEFT = oncoming HEADLIGHTS (white, toward camera)
+// RIGHT = departing BRAKE LIGHTS (red, away from camera)
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { Line2 } from 'three/addons/lines/Line2.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
+import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 
-const W = innerWidth, H = innerHeight;
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.setSize(W, H);
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.2;
-document.body.appendChild(renderer.domElement);
+const HEADLIGHT = { ice: new THREE.Color(0xeaf4ff) };
+const BRAKE = new THREE.Color(0xff2330);
+const BRAKE_HEAD = new THREE.Color(0xff6452);
+
+const canvas = document.getElementById('bg');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(55, W / H, 0.1, 2000);
-camera.position.set(0, 2.2, 6);
-camera.lookAt(0, 1.5, -30);
+renderer.setClearColor(0x04070f, 1);
 
-// UnrealBloom — same as original design
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 900);
+camera.position.set(0, 6, 30);
+
+let bendPhase = 0;
+function bendX(z) { return 6.5 * Math.sin(z * 0.013 + bendPhase) + 2.6 * Math.sin(z * 0.031 + bendPhase * 1.4) + 0.9 * Math.sin(z * 0.061 + 0.7); }
+function bendY(z) { return 0.9 * Math.sin(z * 0.009 + 0.6) + 0.35 * Math.sin(z * 0.024); }
+
+const NEAR_Z = 24, FAR_Z = -260, M = 26;
+
+const LANES = [
+  { x: -2.0, dir: +1, kind: 'head' }, { x: -3.7, dir: +1, kind: 'head' },
+  { x: -5.6, dir: +1, kind: 'head' }, { x: -7.8, dir: +1, kind: 'head' },
+  { x: 2.0, dir: -1, kind: 'brake' }, { x: 3.7, dir: -1, kind: 'brake' },
+  { x: 5.6, dir: -1, kind: 'brake' }, { x: 7.8, dir: -1, kind: 'brake' },
+];
+const CARS_PER_LANE = 6;
+const cars = [];
+const headGroup = new THREE.Group();
+scene.add(headGroup);
+
+function buildCar(lane, slot) {
+  const streakLen = (lane.kind === 'head' ? 26 : 32) + Math.random() * 16;
+  const geo = new LineGeometry();
+  const pos = new Float32Array(M * 3);
+  const col = new Float32Array(M * 3);
+  geo.setPositions(pos); geo.setColors(col);
+  const mat = new LineMaterial({
+    linewidth: lane.kind === 'head' ? 0.17 : 0.15, worldUnits: true, vertexColors: true,
+    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  mat.resolution.set(window.innerWidth, window.innerHeight);
+  const line = new Line2(geo, mat);
+  line.frustumCulled = false;
+  scene.add(line);
+
+  const head = new THREE.Mesh(
+    new THREE.SphereGeometry(lane.kind === 'head' ? 0.22 : 0.2, 12, 12),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95 })
+  );
+  headGroup.add(head);
+
+  const span = NEAR_Z - FAR_Z;
+  const car = {
+    lane, geo, pos, col, line, head, streakLen,
+    bright: 0.7 + Math.random() * 0.5,
+    speed: 26 + Math.random() * 34,
+    z: lane.dir > 0 ? (FAR_Z + (slot / CARS_PER_LANE) * span + Math.random() * 20)
+                    : (NEAR_Z - (slot / CARS_PER_LANE) * span - Math.random() * 20),
+    recycle() {
+      this.streakLen = (lane.kind === 'head' ? 26 : 32) + Math.random() * 16;
+      this.bright = 0.7 + Math.random() * 0.5;
+      this.speed = 26 + Math.random() * 34;
+      this.z = lane.dir > 0 ? FAR_Z - Math.random() * 30 : NEAR_Z + Math.random() * 30;
+    },
+  };
+  cars.push(car);
+}
+LANES.forEach((lane) => { for (let s = 0; s < CARS_PER_LANE; s++) buildCar(lane, s); });
+
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
-const bloom = new UnrealBloomPass(new THREE.Vector2(W, H), 1.8, 0.5, 0.05);
+const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.0, 0.7, 0.1);
 composer.addPass(bloom);
+const vignettePass = new ShaderPass({
+  uniforms: { tDiffuse: { value: null } },
+  vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+  fragmentShader: `uniform sampler2D tDiffuse; varying vec2 vUv;
+    void main(){ vec3 c = texture2D(tDiffuse, vUv).rgb; float d = distance(vUv, vec2(0.5));
+      c *= smoothstep(1.12, 0.42, d); gl_FragColor = vec4(c, 1.0); }`,
+});
+composer.addPass(vignettePass);
 
-// Curvy taillight trails — ice/white headlights + red taillights
-const TRAILS = 10, SEG = 180;
-const HEAD = [0xcfe3ff, 0xf4faff, 0xcfe3ff, 0xf4faff];
-const TAIL = [0xff3340, 0xff5555, 0xff3340, 0xff5555, 0xff3340, 0xff5555];
-const trails = [];
-
-for (let i = 0; i < TRAILS; i++) {
-  const isHead = i < 4;
-  const col = new THREE.Color(isHead ? HEAD[i % 4] : TAIL[(i - 4) % 6]);
-  const laneOffset = (i - TRAILS / 2) * 0.55 + (i % 2 === 0 ? -0.15 : 0.15);
-  const speed = 0.3 + Math.random() * 0.5;
-  const phase = Math.random() * Math.PI * 2;
-  const positions = new Float32Array(SEG * 3);
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  const mat = new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: 0.9 });
-  scene.add(new THREE.Line(geo, mat));
-  trails.push({ laneOffset, speed, phase, t: Math.random() * 60, positions, geo });
-}
-
-function pt(t, lane, ph) {
-  return {
-    x: lane + Math.sin(t * 0.18) * 3.5 + Math.sin(t * 0.07) * 2,
-    y: 0.05 + Math.abs(Math.sin(t * 0.12)) * 0.3,
-    z: -t * 1.2
-  };
-}
+const tmp = new THREE.Color();
+const clock = new THREE.Clock();
+const mouse = { x: 0, y: 0 };
+window.addEventListener('pointermove', (e) => {
+  mouse.x = e.clientX / window.innerWidth - 0.5;
+  mouse.y = e.clientY / window.innerHeight - 0.5;
+});
 
 function animate() {
   requestAnimationFrame(animate);
-  for (const tr of trails) {
-    tr.t += 0.015 * tr.speed;
-    for (let i = 0; i < SEG; i++) {
-      const p = pt(tr.t + i * 0.3, tr.laneOffset, tr.phase);
-      tr.positions[i*3] = p.x;
-      tr.positions[i*3+1] = p.y;
-      tr.positions[i*3+2] = p.z;
+  const dt = Math.min(clock.getDelta(), 0.05);
+  bendPhase += dt * 0.04;
+
+  const hCol = HEADLIGHT.ice;
+  for (const car of cars) {
+    const { lane } = car;
+    car.z += lane.dir * car.speed * dt;
+    if (lane.dir > 0 && car.z > NEAR_Z + 12) car.recycle();
+    if (lane.dir < 0 && car.z < FAR_Z - 12) car.recycle();
+
+    const base = lane.kind === 'head' ? hCol : BRAKE;
+    const headC = lane.kind === 'head' ? hCol : BRAKE_HEAD;
+    for (let k = 0; k < M; k++) {
+      const t = k / (M - 1);
+      const zc = car.z - lane.dir * t * car.streakLen;
+      car.pos[k * 3] = lane.x + bendX(zc);
+      car.pos[k * 3 + 1] = 0.2 + bendY(zc);
+      car.pos[k * 3 + 2] = zc;
+      const inten = Math.pow(1 - t, 1.7) * car.bright;
+      tmp.copy(t < 0.12 ? headC : base);
+      car.col[k * 3] = tmp.r * inten;
+      car.col[k * 3 + 1] = tmp.g * inten;
+      car.col[k * 3 + 2] = tmp.b * inten;
     }
-    tr.geo.attributes.position.needsUpdate = true;
+    car.geo.setPositions(car.pos);
+    car.geo.setColors(car.col);
+    car.head.position.set(lane.x + bendX(car.z), 0.2 + bendY(car.z), car.z);
+    car.head.material.color.copy(headC);
+    const near = THREE.MathUtils.clamp((car.z - FAR_Z) / (NEAR_Z - FAR_Z), 0, 1);
+    car.head.scale.setScalar(0.45 + near * 0.9);
   }
+
+  const tx = mouse.x * 3 + bendX(-30) * 0.3;
+  const ty = 6 - mouse.y * 1.4;
+  camera.position.x += (tx - camera.position.x) * 0.04;
+  camera.position.y += (ty - camera.position.y) * 0.04;
+  camera.position.z += (30 - camera.position.z) * 0.05;
+  camera.lookAt(bendX(-60) * 0.5, 1.0, -70);
+
   composer.render();
 }
 animate();
 
 window.addEventListener('resize', () => {
-  const w = innerWidth, h = innerHeight;
-  camera.aspect = w / h;
-  camera.updateProjectionMatrix();
-  renderer.setSize(w, h);
-  composer.setSize(w, h);
+  const w = window.innerWidth, h = window.innerHeight;
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+  renderer.setSize(w, h); composer.setSize(w, h); bloom.setSize(w, h);
+  cars.forEach((c) => c.line.material.resolution.set(w, h));
 });
 </script>
 </body>

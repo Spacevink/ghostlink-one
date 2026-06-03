@@ -1,0 +1,19 @@
+@import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@300;400;600;700&family=Space+Grotesk:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --cyan: #2ad7ff;
+  --blue: #2f6bff;
+  --bg: #04070f;
+  --surface: rgba(10, 20, 40, 0.7);
+  --border: rgba(42, 215, 255, 0.15);
+  --text: #e8f4ff;
+  --muted: rgba(232, 244, 255, 0.5);
+}
+
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'Space Grotesk', sans-serif; }
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }

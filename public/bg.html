@@ -5,82 +5,93 @@
 <style>
 * { margin: 0; padding: 0; }
 html, body { width: 100%; height: 100%; overflow: hidden; background: #04070f; }
-canvas { display: block; width: 100% !important; height: 100% !important; }
+canvas { display: block; }
 </style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
 </head>
 <body>
-<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
-<script>
+<script type="module">
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+const W = innerWidth, H = innerHeight;
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.setSize(innerWidth, innerHeight);
-renderer.setClearColor(0x04070f, 1);
+renderer.setSize(W, H);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 2000);
+const camera = new THREE.PerspectiveCamera(55, W / H, 0.1, 2000);
 camera.position.set(0, 2.2, 6);
 camera.lookAt(0, 1.5, -30);
 
+// UnrealBloom — same as original design
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(W, H), 1.8, 0.5, 0.05);
+composer.addPass(bloom);
+
+// Curvy taillight trails — ice/white headlights + red taillights
 const TRAILS = 10, SEG = 180;
 const HEAD = [0xcfe3ff, 0xf4faff, 0xcfe3ff, 0xf4faff];
 const TAIL = [0xff3340, 0xff5555, 0xff3340, 0xff5555, 0xff3340, 0xff5555];
-const spreads = [0, 0.015, -0.015, 0.03, -0.03];
 const trails = [];
 
 for (let i = 0; i < TRAILS; i++) {
   const isHead = i < 4;
   const col = new THREE.Color(isHead ? HEAD[i % 4] : TAIL[(i - 4) % 6]);
-  const laneOffset = (i - TRAILS / 2) * 0.6 + (i % 2 === 0 ? -0.2 : 0.2);
-  const speed = 0.4 + Math.random() * 0.6;
+  const laneOffset = (i - TRAILS / 2) * 0.55 + (i % 2 === 0 ? -0.15 : 0.15);
+  const speed = 0.3 + Math.random() * 0.5;
   const phase = Math.random() * Math.PI * 2;
-  const lineObjects = [];
-
-  for (const opac of [1.0, 0.6, 0.3, 0.15, 0.06]) {
-    const positions = new Float32Array(SEG * 3);
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    const mat = new THREE.LineBasicMaterial({
-      color: col, transparent: true, opacity: opac,
-      blending: THREE.AdditiveBlending, depthWrite: false
-    });
-    scene.add(new THREE.Line(geo, mat));
-    lineObjects.push({ positions, geo });
-  }
-  trails.push({ laneOffset, speed, phase, t: Math.random() * 60, lineObjects });
+  const positions = new Float32Array(SEG * 3);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const mat = new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: 0.9 });
+  scene.add(new THREE.Line(geo, mat));
+  trails.push({ laneOffset, speed, phase, t: Math.random() * 60, positions, geo });
 }
 
 function pt(t, lane, ph) {
   return {
-    x: lane + Math.sin(t * 0.14 + ph) * 2.8 + Math.sin(t * 0.06 + ph * 0.5) * 1.4,
-    y: 0.1 + Math.abs(Math.sin(t * 0.1 + ph)) * 0.25,
-    z: -t * 1.6
+    x: lane + Math.sin(t * 0.18) * 3.5 + Math.sin(t * 0.07) * 2,
+    y: 0.05 + Math.abs(Math.sin(t * 0.12)) * 0.3,
+    z: -t * 1.2
   };
 }
 
 function animate() {
   requestAnimationFrame(animate);
   for (const tr of trails) {
-    tr.t += 0.012 * tr.speed;
-    tr.lineObjects.forEach(({ positions, geo }, li) => {
-      const s = spreads[li] || 0;
-      for (let i = 0; i < SEG; i++) {
-        const p = pt(tr.t + i * 0.28, tr.laneOffset, tr.phase);
-        positions[i*3] = p.x + s;
-        positions[i*3+1] = p.y + s * 0.5;
-        positions[i*3+2] = p.z;
-      }
-      geo.attributes.position.needsUpdate = true;
-    });
+    tr.t += 0.015 * tr.speed;
+    for (let i = 0; i < SEG; i++) {
+      const p = pt(tr.t + i * 0.3, tr.laneOffset, tr.phase);
+      tr.positions[i*3] = p.x;
+      tr.positions[i*3+1] = p.y;
+      tr.positions[i*3+2] = p.z;
+    }
+    tr.geo.attributes.position.needsUpdate = true;
   }
-  renderer.render(scene, camera);
+  composer.render();
 }
 animate();
 
 window.addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight;
+  const w = innerWidth, h = innerHeight;
+  camera.aspect = w / h;
   camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
+  renderer.setSize(w, h);
+  composer.setSize(w, h);
 });
 </script>
 </body>

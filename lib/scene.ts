@@ -13,7 +13,7 @@ function initScene(canvas: HTMLCanvasElement, T: any) {
   const TRAILS = 10, SEG = 180
   const HEAD = [0xcfe3ff, 0xf4faff, 0xcfe3ff, 0xf4faff]
   const TAIL = [0xff3340, 0xff5555, 0xff3340, 0xff5555, 0xff3340, 0xff5555]
-
+  const spreads = [0, 0.015, -0.015, 0.03, -0.03]
   const trails: any[] = []
 
   for (let i = 0; i < TRAILS; i++) {
@@ -22,12 +22,9 @@ function initScene(canvas: HTMLCanvasElement, T: any) {
     const laneOffset = (i - TRAILS / 2) * 0.6 + (i % 2 === 0 ? -0.2 : 0.2)
     const speed = 0.4 + Math.random() * 0.6
     const phase = Math.random() * Math.PI * 2
-
-    // 5 layers: bright core + glow rings = convincing bloom without postprocessing
-    const layers = [1.0, 0.6, 0.3, 0.15, 0.06]
     const lineObjects: any[] = []
 
-    for (const opac of layers) {
+    for (const opac of [1.0, 0.6, 0.3, 0.15, 0.06]) {
       const positions = new Float32Array(SEG * 3)
       const geo = new T.BufferGeometry()
       geo.setAttribute('position', new T.BufferAttribute(positions, 3))
@@ -53,15 +50,12 @@ function initScene(canvas: HTMLCanvasElement, T: any) {
     }
   }
 
-  // Tiny spread per layer for thickness illusion
-  const spreads = [0, 0.015, -0.015, 0.03, -0.03]
-
   let animId = 0
   function animate() {
     animId = requestAnimationFrame(animate)
     for (const tr of trails) {
       tr.t += 0.012 * tr.speed
-      tr.lineObjects.forEach(({ positions, geo }: any, li: number) {
+      tr.lineObjects.forEach(({ positions, geo }: any, li: number) => {
         const spread = spreads[li] || 0
         for (let i = 0; i < SEG; i++) {
           const p = pt(tr.t + i * 0.28, tr.laneOffset, tr.phase)

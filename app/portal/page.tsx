@@ -3,6 +3,18 @@ import { useEffect, useState } from 'react'
 import { createClient, Project } from '../../lib/supabase'
 import { useRouter } from 'next/navigation'
 
+const TradingIcon = () => (
+  <svg width="52" height="52" viewBox="0 0 52 52" fill="none" style={{ marginBottom: 4 }}>
+    <path d="M26 4L46 15v22L26 48 6 37V15L26 4z"
+      stroke="rgba(207,227,255,.4)" strokeWidth="1" fill="rgba(207,227,255,.06)" />
+    <path d="M26 12L38 19v14L26 40 14 33V19L26 12z"
+      stroke="rgba(207,227,255,.2)" strokeWidth="1" fill="rgba(207,227,255,.04)" />
+    <polyline points="18,30 21,26 24,27 27,21 30,22 33,17"
+      stroke="#cfe3ff" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+    <circle cx="33" cy="17" r="2" fill="#cfe3ff" />
+  </svg>
+)
+
 export default function PortalPage() {
   const supabase = createClient()
   const router = useRouter()
@@ -87,7 +99,7 @@ export default function PortalPage() {
                   style={{ background: 'linear-gradient(160deg, rgba(13,20,38,.6) 0%, rgba(6,15,30,.8) 100%)', borderColor: 'rgba(150,190,255,.28)' }}>
                   <div className="widget__glow" style={{ background: 'radial-gradient(120% 80% at 50% 120%, rgba(100,180,255,.4), transparent 60%)' }} />
                   <span className="widget__id mono">AI</span>
-                  <div style={{ fontSize: 32, marginBottom: 4 }}>📈</div>
+                  <TradingIcon />
                   <div className="widget__label">Trading Bot</div>
                   <div className="widget__sub">StatArb · Regime-Switching</div>
                   <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>Live dashboard · Alpaca paper</div>

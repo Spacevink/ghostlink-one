@@ -22,27 +22,41 @@ const REGIME_CONFIG: Record<string, { label: string; color: string; bg: string }
   initialising:    { label: 'Initialising',    color: 'var(--ink-3)', bg: 'rgba(255,255,255,.04)' },
 }
 
+function timeAgo(dateStr: string) {
+  const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000)
+  if (diff < 60) return `${diff}s ago`
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+  return `${Math.floor(diff / 86400)}d ago`
+}
+
 export default function TradingPage() {
   const router = useRouter()
   const [snapshots, setSnapshots] = useState<any[]>([])
   const [positions, setPositions] = useState<any[]>([])
   const [trades,    setTrades]    = useState<any[]>([])
   const [regime,    setRegime]    = useState({ label: 'initialising', confidence: null as number | null })
+  const [heartbeat, setHeartbeat] = useState<any>(null)
   const [circuitBreaker, setCircuitBreaker] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [loading, setLoading] = useState(true)
 
   const refresh = useCallback(async () => {
-    const [s, p, t, r] = await Promise.all([
+    const [s, p, t, r, hb] = await Promise.all([
       trading.from('portfolio_snapshots').select('*').order('created_at', { ascending: true }).limit(60),
       trading.from('positions').select('*').eq('status', 'open').order('created_at', { ascending: false }),
       trading.from('trades').select('*').order('created_at', { ascending: false }).limit(30),
       trading.from('regime_history').select('*').order('created_at', { ascending: false }).limit(1),
+      trading.from('heartbeats').select('*').order('created_at', { ascending: false }).limit(10),
     ])
     if (s.data) setSnapshots(s.data)
     if (p.data) setPositions(p.data)
     if (t.data) setTrades(t.data)
     if (r.data?.length) setRegime({ label: r.data[0].regime_label, confidence: r.data[0].confidence })
+    if (hb.data?.length) {
+      setHeartbeat(hb.data[0])
+      setCircuitBreaker(hb.data[0].circuit_breaker)
+    }
     setLastUpdated(new Date())
     setLoading(false)
   }, [])
@@ -54,6 +68,7 @@ export default function TradingPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'positions' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'trades' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'regime_history' }, refresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'heartbeats' }, refresh)
       .subscribe()
     return () => { trading.removeChannel(ch) }
   }, [refresh])
@@ -65,6 +80,11 @@ export default function TradingPage() {
   const closed      = trades.filter(t => t.status === 'closed' && t.pnl != null)
   const winRate     = closed.length ? (closed.filter(t => t.pnl > 0).length / closed.length) * 100 : null
   const cfg         = REGIME_CONFIG[regime.label] ?? REGIME_CONFIG.initialising
+
+  // Health status derived from last heartbeat
+  const hbAge = heartbeat ? Math.floor((Date.now() - new Date(heartbeat.created_at).getTime()) / 60000) : null
+  const engineOk = heartbeat && heartbeat.status === 'ok' && hbAge !== null && hbAge < 60
+  const engineStatus = !heartbeat ? 'no data' : hbAge !== null && hbAge > 60 ? 'stale' : heartbeat.status
 
   const chartData = snapshots.map(s => ({
     date:  new Date(s.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
@@ -141,6 +161,49 @@ export default function TradingPage() {
           ))}
         </div>
 
+        {/* System Health */}
+        <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '18px 24px', marginBottom: 24 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+            <div className="eyebrow">System Health</div>
+            <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+
+              {/* Engine */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: engineOk ? '#22c55e' : engineStatus === 'stale' ? '#f59e0b' : '#ef4444', display: 'inline-block' }} />
+                <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)' }}>Engine</span>
+                <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                  {heartbeat ? timeAgo(heartbeat.created_at) : 'no heartbeat yet'}
+                </span>
+              </div>
+
+              {/* Alpaca */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: heartbeat?.alpaca_ok ? '#22c55e' : heartbeat ? '#ef4444' : '#5f7088', display: 'inline-block' }} />
+                <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)' }}>Alpaca</span>
+              </div>
+
+              {/* Supabase */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: heartbeat ? '#22c55e' : '#5f7088', display: 'inline-block' }} />
+                <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)' }}>Supabase</span>
+              </div>
+
+              {/* Active pairs */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--ink-3)' }}>Pairs scanned:</span>
+                <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--ink)' }}>{heartbeat?.active_pairs ?? '—'}</span>
+              </div>
+            </div>
+
+            {/* Error message if any */}
+            {heartbeat?.error_msg && (
+              <div style={{ width: '100%', marginTop: 8, padding: '8px 12px', borderRadius: 6, background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.2)', fontSize: 11, fontFamily: 'var(--font-mono)', color: '#ef4444' }}>
+                {heartbeat.error_msg}
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* Equity curve */}
         <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '22px 24px', marginBottom: 24 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
@@ -173,8 +236,6 @@ export default function TradingPage() {
 
         {/* Positions + Trade log */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
-
-          {/* Open positions */}
           <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '22px 24px' }}>
             <div className="eyebrow" style={{ marginBottom: 16 }}>Open Positions</div>
             {positions.length === 0 ? (
@@ -206,7 +267,6 @@ export default function TradingPage() {
             )}
           </div>
 
-          {/* Trade log */}
           <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '22px 24px', overflow: 'hidden' }}>
             <div className="eyebrow" style={{ marginBottom: 16 }}>Trade Log <span style={{ color: 'var(--ink-3)', textTransform: 'none', fontSize: 11, letterSpacing: 0 }}>last 30</span></div>
             {trades.length === 0 ? (

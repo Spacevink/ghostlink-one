@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import { useRouter } from 'next/navigation'
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
+import { AreaChart, Area, Line, LineChart, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend } from 'recharts'
 
 const trading = createClient(
   process.env.NEXT_PUBLIC_TRADING_SUPABASE_URL!,
@@ -47,16 +47,13 @@ export default function TradingPage() {
       trading.from('positions').select('*').eq('status', 'open').order('created_at', { ascending: false }),
       trading.from('trades').select('*').order('created_at', { ascending: false }).limit(30),
       trading.from('regime_history').select('*').order('created_at', { ascending: false }).limit(1),
-      trading.from('heartbeats').select('*').order('created_at', { ascending: false }).limit(10),
+      trading.from('heartbeats').select('*').order('created_at', { ascending: false }).limit(1),
     ])
     if (s.data) setSnapshots(s.data)
     if (p.data) setPositions(p.data)
     if (t.data) setTrades(t.data)
     if (r.data?.length) setRegime({ label: r.data[0].regime_label, confidence: r.data[0].confidence })
-    if (hb.data?.length) {
-      setHeartbeat(hb.data[0])
-      setCircuitBreaker(hb.data[0].circuit_breaker)
-    }
+    if (hb.data?.length) { setHeartbeat(hb.data[0]); setCircuitBreaker(hb.data[0].circuit_breaker) }
     setLastUpdated(new Date())
     setLoading(false)
   }, [])
@@ -80,26 +77,33 @@ export default function TradingPage() {
   const closed      = trades.filter(t => t.status === 'closed' && t.pnl != null)
   const winRate     = closed.length ? (closed.filter(t => t.pnl > 0).length / closed.length) * 100 : null
   const cfg         = REGIME_CONFIG[regime.label] ?? REGIME_CONFIG.initialising
-
-  // Health status derived from last heartbeat
-  const hbAge = heartbeat ? Math.floor((Date.now() - new Date(heartbeat.created_at).getTime()) / 60000) : null
-  const engineOk = heartbeat && heartbeat.status === 'ok' && hbAge !== null && hbAge < 60
+  const hbAge       = heartbeat ? Math.floor((Date.now() - new Date(heartbeat.created_at).getTime()) / 60000) : null
+  const engineOk    = heartbeat && heartbeat.status === 'ok' && hbAge !== null && hbAge < 60
   const engineStatus = !heartbeat ? 'no data' : hbAge !== null && hbAge > 60 ? 'stale' : heartbeat.status
 
+  // Benchmark normalisation: first SPY close = $100k reference
+  const spyStart = snapshots.find(s => s.spy_close != null)?.spy_close ?? null
   const chartData = snapshots.map(s => ({
-    date:  new Date(s.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-    value: Number(s.portfolio_value),
-    pnl:   Number(s.total_pnl),
+    date:      new Date(s.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+    bot:       Number(s.portfolio_value),
+    benchmark: spyStart && s.spy_close ? Math.round(100000 * Number(s.spy_close) / spyStart) : null,
+    pnl:       Number(s.total_pnl),
   }))
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (!active || !payload?.length) return null
-    const { value, pnl } = payload[0].payload
+    const bot = payload.find((p: any) => p.dataKey === 'bot')?.value
+    const bm  = payload.find((p: any) => p.dataKey === 'benchmark')?.value
     return (
-      <div style={{ background: 'var(--bg2)', border: '1px solid var(--edge)', borderRadius: 10, padding: '10px 14px', fontSize: 13 }}>
-        <div style={{ color: 'var(--ink-3)', marginBottom: 4 }}>{label}</div>
-        <div style={{ color: 'var(--ink)', fontWeight: 600 }}>${fmt(value)}</div>
-        <div style={{ color: pnlColor(pnl) }}>{pnl >= 0 ? '+' : ''}${fmt(pnl)} P&L</div>
+      <div style={{ background: 'var(--bg2)', border: '1px solid var(--edge)', borderRadius: 10, padding: '10px 14px', fontSize: 12 }}>
+        <div style={{ color: 'var(--ink-3)', marginBottom: 6 }}>{label}</div>
+        {bot != null && <div style={{ color: '#cfe3ff', marginBottom: 2 }}>Bot: <strong>${fmt(bot)}</strong></div>}
+        {bm  != null && <div style={{ color: '#f59e0b' }}>S&P 500: <strong>${fmt(bm)}</strong></div>}
+        {bot != null && bm != null && (
+          <div style={{ color: bot > bm ? '#22c55e' : '#ef4444', marginTop: 4, fontSize: 11 }}>
+            {bot > bm ? '▲' : '▼'} {fmt(Math.abs(bot - bm))} vs benchmark
+          </div>
+        )}
       </div>
     )
   }
@@ -145,7 +149,7 @@ export default function TradingPage() {
 
       <div style={{ maxWidth: 1100, margin: '0 auto', padding: '36px 28px 0' }}>
 
-        {/* Metrics strip */}
+        {/* Metrics */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 28 }}>
           {[
             { label: 'Portfolio Value', value: portValue != null ? `$${fmt(portValue)}` : '—', sub: 'paper account', color: undefined },
@@ -166,70 +170,55 @@ export default function TradingPage() {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
             <div className="eyebrow">System Health</div>
             <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
-
-              {/* Engine */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                <span style={{ width: 7, height: 7, borderRadius: '50%', background: engineOk ? '#22c55e' : engineStatus === 'stale' ? '#f59e0b' : '#ef4444', display: 'inline-block' }} />
-                <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)' }}>Engine</span>
-                <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-                  {heartbeat ? timeAgo(heartbeat.created_at) : 'no heartbeat yet'}
-                </span>
-              </div>
-
-              {/* Alpaca */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                <span style={{ width: 7, height: 7, borderRadius: '50%', background: heartbeat?.alpaca_ok ? '#22c55e' : heartbeat ? '#ef4444' : '#5f7088', display: 'inline-block' }} />
-                <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)' }}>Alpaca</span>
-              </div>
-
-              {/* Supabase */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                <span style={{ width: 7, height: 7, borderRadius: '50%', background: heartbeat ? '#22c55e' : '#5f7088', display: 'inline-block' }} />
-                <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)' }}>Supabase</span>
-              </div>
-
-              {/* Active pairs */}
+              {[
+                { label: 'Engine', ok: engineOk, sub: heartbeat ? timeAgo(heartbeat.created_at) : 'no heartbeat yet' },
+                { label: 'Alpaca', ok: heartbeat?.alpaca_ok ?? null, sub: null },
+                { label: 'Supabase', ok: heartbeat ? true : null, sub: null },
+              ].map(({ label, ok, sub }) => (
+                <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: ok === null ? '#5f7088' : ok ? '#22c55e' : '#ef4444', display: 'inline-block' }} />
+                  <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)' }}>{label}</span>
+                  {sub && <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>{sub}</span>}
+                </div>
+              ))}
               <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                 <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--ink-3)' }}>Pairs scanned:</span>
                 <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--ink)' }}>{heartbeat?.active_pairs ?? '—'}</span>
               </div>
             </div>
-
-            {/* Error message if any */}
-            {heartbeat?.error_msg && (
-              <div style={{ width: '100%', marginTop: 8, padding: '8px 12px', borderRadius: 6, background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.2)', fontSize: 11, fontFamily: 'var(--font-mono)', color: '#ef4444' }}>
-                {heartbeat.error_msg}
-              </div>
-            )}
           </div>
+          {heartbeat?.error_msg && (
+            <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 6, background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.2)', fontSize: 11, fontFamily: 'var(--font-mono)', color: '#ef4444' }}>
+              {heartbeat.error_msg}
+            </div>
+          )}
         </div>
 
-        {/* Equity curve */}
+        {/* Equity curve vs S&P 500 */}
         <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '22px 24px', marginBottom: 24 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-            <div className="eyebrow">Equity Curve</div>
-            <span style={{ fontSize: 11, color: 'var(--ink-3)', fontFamily: 'var(--font-mono)' }}>vs $100k start</span>
+            <div className="eyebrow">Equity Curve vs S&P 500</div>
+            <div style={{ display: 'flex', gap: 16, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
+              <span style={{ color: '#cfe3ff' }}>— Bot</span>
+              <span style={{ color: '#f59e0b' }}>— S&P 500</span>
+              <span style={{ color: 'var(--ink-3)' }}>base $100k</span>
+            </div>
           </div>
           {chartData.length > 1 ? (
-            <ResponsiveContainer width="100%" height={200}>
-              <AreaChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%"  stopColor="var(--accent)" stopOpacity={0.25} />
-                    <stop offset="95%" stopColor="var(--accent)" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(160,195,255,.08)" />
                 <XAxis dataKey="date" tick={{ fill: 'var(--ink-3)', fontSize: 11, fontFamily: 'var(--font-mono)' }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill: 'var(--ink-3)', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={v => `$${(v/1000).toFixed(0)}k`} domain={['auto','auto']} />
-                <ReferenceLine y={100000} stroke="rgba(160,195,255,.18)" strokeDasharray="4 2" />
+                <ReferenceLine y={100000} stroke="rgba(160,195,255,.12)" strokeDasharray="4 2" />
                 <Tooltip content={<CustomTooltip />} />
-                <Area type="monotone" dataKey="value" stroke="var(--accent)" strokeWidth={1.5} fill="url(#g)" dot={false} activeDot={{ r: 4, fill: 'var(--accent)' }} />
-              </AreaChart>
+                <Line type="monotone" dataKey="bot" stroke="#cfe3ff" strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#cfe3ff' }} />
+                <Line type="monotone" dataKey="benchmark" stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="5 3" dot={false} activeDot={{ r: 3, fill: '#f59e0b' }} connectNulls />
+              </LineChart>
             </ResponsiveContainer>
           ) : (
-            <div style={{ height: 200, display: 'grid', placeItems: 'center', color: 'var(--ink-3)', fontSize: 13 }}>
-              Equity curve appears after the first end-of-day snapshot
+            <div style={{ height: 220, display: 'grid', placeItems: 'center', color: 'var(--ink-3)', fontSize: 13 }}>
+              Chart appears after the first end-of-day snapshot
             </div>
           )}
         </div>
@@ -288,9 +277,7 @@ export default function TradingPage() {
                           {new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                         </td>
                         <td style={{ paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink)' }}>{t.pair_id}</td>
-                        <td style={{ paddingRight: 10, color: t.direction === 'long_spread' ? '#22c55e' : '#ef4444' }}>
-                          {t.direction === 'long_spread' ? '↑' : '↓'}
-                        </td>
+                        <td style={{ paddingRight: 10, color: t.direction === 'long_spread' ? '#22c55e' : '#ef4444' }}>{t.direction === 'long_spread' ? '↑' : '↓'}</td>
                         <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-3)' }}>{fmt(t.zscore)}</td>
                         <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: pnlColor(t.pnl) }}>
                           {t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}$${fmt(t.pnl)}` : '—'}

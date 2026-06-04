@@ -82,6 +82,18 @@ export default function PortalPage() {
                 <div className="portal__lead">Each project lives at its own subdomain with its own stack.</div>
               </div>
               <div className="grid">
+                {/* Fixed: Trading Bot module */}
+                <a className="widget glass" href="/portal/trading"
+                  style={{ background: 'linear-gradient(160deg, rgba(13,20,38,.6) 0%, rgba(6,15,30,.8) 100%)', borderColor: 'rgba(150,190,255,.28)' }}>
+                  <div className="widget__glow" style={{ background: 'radial-gradient(120% 80% at 50% 120%, rgba(100,180,255,.4), transparent 60%)' }} />
+                  <span className="widget__id mono">AI</span>
+                  <div style={{ fontSize: 32, marginBottom: 4 }}>📈</div>
+                  <div className="widget__label">Trading Bot</div>
+                  <div className="widget__sub">StatArb · Regime-Switching</div>
+                  <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>Live dashboard · Alpaca paper</div>
+                </a>
+
+                {/* Dynamic projects */}
                 {projects.map((p, i) => {
                   const url = p.subdomain ? `https://${p.subdomain}.ghostlink.one` : p.repo_url || '#'
                   return (
@@ -96,6 +108,7 @@ export default function PortalPage() {
                     </a>
                   )
                 })}
+
                 <button className="widget widget--outline" onClick={() => setShowModal(true)}
                   style={{ cursor: 'pointer', border: 'none', background: 'none' }}>
                   <div className="widget__glow" />

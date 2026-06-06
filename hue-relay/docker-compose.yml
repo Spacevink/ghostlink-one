@@ -1,0 +1,26 @@
+# GhostLink – Hue Relay
+# Deploy on Synology via Container Manager → Project → Create from docker-compose.yml
+#
+# Required: copy this file to your Synology, fill in the env vars below,
+# then run:  docker compose up -d
+#
+# Port 3721 must be forwarded on your router:  WAN:3721 → Synology:3721
+# (or use your existing DDNS hostname)
+
+services:
+  hue-relay:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3721:3721"
+    environment:
+      HUE_BRIDGE_IP:   "192.168.1.X"     # <-- your Hue Bridge local IP
+      HUE_API_KEY:     "your-hue-api-key" # <-- get from https://YOUR_BRIDGE_IP/debug/clip.html
+      RELAY_SECRET:    "change-me-strong-secret"  # <-- must match Vercel HUE_RELAY_SECRET
+      PORT:            "3721"
+    # Optional: bind only to LAN interface for extra security
+    # network_mode: bridge
+
+# After starting, verify with:
+#   curl -H "x-relay-secret: YOUR_SECRET" http://localhost:3721/health
+#   curl -H "x-relay-secret: YOUR_SECRET" http://localhost:3721/hue/lights

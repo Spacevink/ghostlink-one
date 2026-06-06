@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import * as THREE from 'three'
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
 import {
   type HueLightsMap, type HueLight,
   fetchLights, toggleLight, setBrightness,
@@ -11,16 +11,15 @@ import {
 
 // ─── Constants ────────────────────────────────────────────────
 const WALL_H  = 2.8
-const WALL_T  = 0.25   // thick exterior wall
-const WALL_TI = 0.10   // thin interior divider
+const WALL_T  = 0.25
+const WALL_TI = 0.10
 const FLOOR_T = 0.08
 const Y0      = 0
 const Y1      = WALL_H + FLOOR_T + 0.08
 const BG      = 0x04070f
-const EXT_COL = 0x222230   // dark charcoal exterior
-const INT_COL = 0xf2ede0   // warm white interior
+const EXT_COL = 0x222230
+const INT_COL = 0xf2ede0
 
-// ─── Furniture colour palette ─────────────────────────────────
 const FC = {
   sofa:       0x9a4040,
   sofaBack:   0x882e2e,
@@ -38,10 +37,6 @@ const FC = {
   glass:      0x88aabb,
   rug:        0x8a7060,
 }
-
-// ─────────────────────────────────────────────────────────────
-//  Procedural texture generators  (client-side only)
-// ─────────────────────────────────────────────────────────────
 
 type TexKey = 'wood' | 'tile' | 'concrete' | 'hall'
 
@@ -111,9 +106,6 @@ function makeHall(): THREE.CanvasTexture {
   const t=new THREE.CanvasTexture(cv); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(1.5,1.5); return t
 }
 
-// ─────────────────────────────────────────────────────────────
-//  Floor plan data
-// ─────────────────────────────────────────────────────────────
 interface FItem { rx:number; rz:number; w:number; h:number; d:number; col:number; cast?:boolean }
 interface RoomDef { id:string; label:string; x:number; z:number; w:number; d:number; floorY:number; tex:TexKey; items:FItem[] }
 
@@ -224,9 +216,6 @@ const FIXTURE_POS: Record<string, {x:number; y:number; z:number}> = {
   nachthal:   {x:3.9,  y:Y1+WALL_H-.15, z:3.7},
 }
 
-// ─────────────────────────────────────────────────────────────
-//  Scene builders
-// ─────────────────────────────────────────────────────────────
 function put(scene:THREE.Scene, geo:THREE.BufferGeometry, mat:THREE.Material,
              x:number, y:number, z:number, cast=false, recv=true): THREE.Mesh {
   const m = new THREE.Mesh(geo, mat)
@@ -236,14 +225,10 @@ function put(scene:THREE.Scene, geo:THREE.BufferGeometry, mat:THREE.Material,
 
 function buildRoom(scene:THREE.Scene, r:RoomDef, tex:Record<TexKey,THREE.Texture>) {
   const cx=r.x+r.w/2, cz=r.z+r.d/2, wy=r.floorY+WALL_H/2
-
-  // Floor
   const f=put(scene, new THREE.BoxGeometry(r.w,FLOOR_T,r.d),
     new THREE.MeshLambertMaterial({map:tex[r.tex]}),
     cx, r.floorY-FLOOR_T/2, cz, false, true)
   f.userData={roomId:r.id}
-
-  // Interior walls (white)
   const wm=new THREE.MeshLambertMaterial({color:INT_COL})
   for (const [x,y,z,w,h,d] of [
     [cx,       wy, r.z,      r.w+WALL_TI, WALL_H, WALL_TI],
@@ -252,8 +237,6 @@ function buildRoom(scene:THREE.Scene, r:RoomDef, tex:Record<TexKey,THREE.Texture
     [r.x+r.w,  wy, cz,       WALL_TI, WALL_H, r.d],
   ] as [number,number,number,number,number,number][])
     put(scene, new THREE.BoxGeometry(w,h,d), wm, x,y,z, true, true)
-
-  // Furniture
   for (const it of r.items)
     put(scene, new THREE.BoxGeometry(it.w,it.h,it.d),
       new THREE.MeshLambertMaterial({color:it.col}),
@@ -295,9 +278,6 @@ function buildGarden(scene:THREE.Scene, concreteTex:THREE.Texture) {
   put(scene, new THREE.BoxGeometry(.15,.25,8.0), lm, -3.725,.125,4.0)
 }
 
-// ─────────────────────────────────────────────────────────────
-//  Component
-// ─────────────────────────────────────────────────────────────
 interface Props { initialLights: HueLightsMap }
 type Floor = 'ground' | 'first'
 
@@ -328,7 +308,6 @@ export default function HomeScene({ initialLights }: Props) {
     } finally{ setToggling(null) }
   },[])
 
-  // Sync point light intensities on state change
   useEffect(()=>{
     for (const l of Object.values(lights)) {
       const pl=plightsRef.current.get(inferRoom(l.name)??'')
@@ -341,12 +320,10 @@ export default function HomeScene({ initialLights }: Props) {
     }
   },[lights])
 
-  // Build / rebuild Three.js scene when floor changes
   useEffect(()=>{
     const mount=mountRef.current
     if (!mount) return
 
-    // ── Textures ─────────────────────────────────────────────
     const tex: Record<TexKey,THREE.Texture> = {
       wood:     makeHerringbone(),
       tile:     makeTile(),
@@ -354,7 +331,6 @@ export default function HomeScene({ initialLights }: Props) {
       hall:     makeHall(),
     }
 
-    // ── Renderer ──────────────────────────────────────────────
     const renderer=new THREE.WebGLRenderer({antialias:true})
     renderer.setPixelRatio(Math.min(window.devicePixelRatio,2))
     renderer.setClearColor(BG,1)
@@ -362,13 +338,11 @@ export default function HomeScene({ initialLights }: Props) {
     renderer.shadowMap.type=THREE.PCFSoftShadowMap
     mount.appendChild(renderer.domElement)
 
-    // ── Camera (OrthographicCamera for isometric look) ────────
     const zoom=9, asp=mount.clientWidth/mount.clientHeight
     const cam=new THREE.OrthographicCamera(-zoom*asp,zoom*asp,zoom,-zoom,.1,200)
     cam.position.set(18,18,18); cam.lookAt(4.25,1.4,4.8)
     camRef.current=cam
 
-    // ── OrbitControls ──────────────────────────────────────────
     const controls=new OrbitControls(cam,renderer.domElement)
     controls.target.set(4.25,1.4,4.8)
     controls.enableDamping=true; controls.dampingFactor=0.08
@@ -376,15 +350,12 @@ export default function HomeScene({ initialLights }: Props) {
     controls.maxPolarAngle=Math.PI/2.05
     controls.update(); ctrlRef.current=controls
 
-    // ── Scene ─────────────────────────────────────────────────
     const scene=new THREE.Scene()
     scene.background=new THREE.Color(BG)
     scene.fog=new THREE.FogExp2(BG,.022)
 
-    // Base ambient (cool blue — "moonlight" / sky fill)
     scene.add(new THREE.AmbientLight(0x3a4a6a,2.8))
 
-    // Main directional (sun from top-left, casts shadows)
     const sun=new THREE.DirectionalLight(0x8899cc,1.8)
     sun.position.set(14,22,10); sun.castShadow=true
     sun.shadow.mapSize.set(2048,2048)
@@ -394,11 +365,9 @@ export default function HomeScene({ initialLights }: Props) {
     sun.shadow.bias=-.0008
     scene.add(sun)
 
-    // Soft fill from opposite corner
     const fill=new THREE.DirectionalLight(0x445566,.5)
     fill.position.set(-8,10,-6); scene.add(fill)
 
-    // ── Ground plane (extends beyond house) ───────────────────
     const gp=new THREE.Mesh(
       new THREE.PlaneGeometry(60,60),
       new THREE.MeshLambertMaterial({color:0x181820})
@@ -406,13 +375,11 @@ export default function HomeScene({ initialLights }: Props) {
     gp.rotation.x=-Math.PI/2; gp.position.set(4.25,-.04,4.8)
     gp.receiveShadow=true; scene.add(gp)
 
-    // ── Build rooms ───────────────────────────────────────────
     const rooms=floor==='ground' ? GROUND : FIRST
     for (const r of rooms) buildRoom(scene,r,tex)
     buildExterior(scene, floor==='ground' ? Y0 : Y1)
     if (floor==='ground') { buildStairs(scene); buildGarden(scene,tex.concrete) }
 
-    // ── Hue fixtures + point lights ───────────────────────────
     const pls=new Map<string,THREE.PointLight>()
     for (const [roomId,pos] of Object.entries(FIXTURE_POS)) {
       const onFirst=pos.y>Y1
@@ -429,7 +396,6 @@ export default function HomeScene({ initialLights }: Props) {
     }
     plightsRef.current=pls
 
-    // Hydrate initial state
     for (const l of Object.values(lights)) {
       const pl=pls.get(inferRoom(l.name)??'')
       if (!pl||!l.state.on||l.state.reachable===false) continue
@@ -437,7 +403,6 @@ export default function HomeScene({ initialLights }: Props) {
       if (l.state.colormode==='xy'&&l.state.xy) pl.color.set(xyBriToHex(l.state.xy,bri))
     }
 
-    // ── Resize ────────────────────────────────────────────────
     const resize=()=>{
       const w=mount.clientWidth, h=mount.clientHeight
       renderer.setSize(w,h)
@@ -449,7 +414,6 @@ export default function HomeScene({ initialLights }: Props) {
     }
     const ro=new ResizeObserver(resize); ro.observe(mount)
 
-    // ── Animate ────────────────────────────────────────────────
     const animate=()=>{ rafRef.current=requestAnimationFrame(animate); controls.update(); renderer.render(scene,cam) }
     animate(); resize()
 
@@ -476,8 +440,6 @@ export default function HomeScene({ initialLights }: Props) {
 
   return (
     <div style={{position:'fixed',inset:0,background:'var(--bg)',display:'flex',flexDirection:'column',fontFamily:'var(--font-body)',color:'var(--ink)'}}>
-
-      {/* Topbar */}
       <div className="glass" style={{height:72,padding:'0 30px',display:'flex',alignItems:'center',gap:16,borderBottom:'1px solid var(--edge)',flexShrink:0}}>
         <a href="/portal" style={{color:'var(--ink-3)',textDecoration:'none',fontSize:12,fontFamily:'var(--font-mono)',letterSpacing:'.1em'}}>← Portal</a>
         <div className="brand" style={{marginLeft:8}}>
@@ -485,12 +447,9 @@ export default function HomeScene({ initialLights }: Props) {
           <span className="brand__name">Ghostlink</span>
           <span className="brand__dot">.home</span>
         </div>
-
-        {/* Hint */}
         <span style={{fontSize:10,color:'var(--ink-3)',fontFamily:'var(--font-mono)',letterSpacing:'.08em',marginLeft:8}}>
           Drag = roteren · Scroll = zoom · Shift+drag = pan
         </span>
-
         <div style={{marginLeft:'auto',display:'flex',gap:8}}>
           {(['ground','first'] as Floor[]).map(f=>(
             <button key={f} onClick={()=>setFloor(f)} style={{
@@ -504,17 +463,13 @@ export default function HomeScene({ initialLights }: Props) {
             </button>
           ))}
         </div>
-
         <button onClick={refresh} disabled={loading} style={{padding:'7px 14px',borderRadius:'var(--r-pill)',border:'1px solid var(--edge)',background:'transparent',color:'var(--ink-3)',fontSize:11,fontFamily:'var(--font-mono)',cursor:'pointer',letterSpacing:'.1em',opacity:loading?.5:1}}>
           {loading?'···':'⟳ SYNC'}
         </button>
       </div>
 
-      {/* Main */}
       <div style={{flex:1,display:'flex',overflow:'hidden'}}>
         <div ref={mountRef} style={{flex:1,position:'relative'}}/>
-
-        {/* Light panel */}
         <div className="glass" style={{width:272,display:'flex',flexDirection:'column',borderLeft:'1px solid var(--edge)',overflow:'hidden'}}>
           <div style={{padding:'18px 20px 12px',borderBottom:'1px solid var(--edge)'}}>
             <div className="eyebrow" style={{marginBottom:4}}>Philips Hue</div>
@@ -522,9 +477,7 @@ export default function HomeScene({ initialLights }: Props) {
               {ll.length?`${ll.filter(l=>l.state.on).length} / ${ll.length} aan`:'Geen verbinding'}
             </div>
           </div>
-
           {error&&<div style={{margin:'12px 16px',padding:'10px 14px',borderRadius:'var(--r-sm)',background:'rgba(255,50,50,.08)',border:'1px solid rgba(255,50,50,.2)',fontSize:12,color:'#ff8080'}}>{error} — relay actief?</div>}
-
           <div style={{flex:1,overflowY:'auto',padding:'12px 0'}}>
             {active.length===0&&ll.length===0&&(
               <div style={{padding:'20px',fontSize:12,color:'var(--ink-3)',lineHeight:1.6}}>
@@ -562,7 +515,6 @@ export default function HomeScene({ initialLights }: Props) {
               ))}
             </>}
           </div>
-
           <div style={{padding:'12px 20px',borderTop:'1px solid var(--edge)',fontSize:10,color:'var(--ink-3)',fontFamily:'var(--font-mono)',lineHeight:1.6}}>
             "Keuken 1" → keuken · "Slaapkamer" → slaapkamer
           </div>

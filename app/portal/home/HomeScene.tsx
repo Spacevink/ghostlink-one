@@ -8,37 +8,31 @@ import {
   briToPercent, inferRoom, WARM_WHITE_HEX, xyBriToHex,
 } from '../../../lib/hue'
 
-// ─────────────────────────────────────────────────────────────
-//  Scene constants  (1 unit = 1 metre)
-// ─────────────────────────────────────────────────────────────
-const WALL_H   = 2.8
-const WALL_T   = 0.12
-const FLOOR_T  = 0.08
-const Y0       = 0
-const Y1       = WALL_H + FLOOR_T
+const WALL_H  = 2.8
+const WALL_T  = 0.12
+const FLOOR_T = 0.08
+const Y0      = 0
+const Y1      = WALL_H + FLOOR_T
+const BG      = 0x04070f
 
-const BG_COLOR = 0x04070f   // matches --bg in globals.css
-
-// ─── Palette ──────────────────────────────────────────────────
+// ─── Palette (light enough to read without artificial lights) ─
 const C = {
-  wallExt:     0x1c2030,
-  floorWood:   0x7c5c38,
-  floorTile:   0x8a95a8,
-  floorGarage: 0x2a2a2a,
-  floorHall:   0x5c5248,
-  sofa:        0x7a3030,
-  table:       0x4a3018,
-  bed:         0x2a3a5a,
-  white:       0xf0ede8,
-  dark:        0x181820,
-  grey:        0x3a3a3a,
-  car:         0x1a3060,
-  shelves:     0x2a2218,
+  wallExt:     0x2c3550,  // dark blue-grey — visible but moody
+  wallInt:     0x38405a,
+  floorWood:   0x9a7248,  // warm oak
+  floorTile:   0xa8b0c0,  // cool tile
+  floorGarage: 0x3a3a3a,
+  floorHall:   0x786860,  // warm grey
+  sofa:        0x9a4040,
+  table:       0x5c3e20,
+  bed:         0x364a70,
+  white:       0xf5f0e8,
+  dark:        0x222232,
+  grey:        0x4a4a5a,
+  car:         0x1e3a70,
+  shelves:     0x382c1c,
 }
 
-// ─────────────────────────────────────────────────────────────
-//  Floor plan data
-// ─────────────────────────────────────────────────────────────
 interface FItem { rx:number; rz:number; w:number; h:number; d:number; col:number }
 interface RoomDef { id:string; label:string; x:number; z:number; w:number; d:number; floorY:number; floorCol:number; items:FItem[] }
 
@@ -157,45 +151,34 @@ const FIXTURE_POS: Record<string, {x:number; y:number; z:number}> = {
   nachthal:   {x:3.9,  y:Y1+WALL_H-0.15, z:3.7},
 }
 
-// ─────────────────────────────────────────────────────────────
-//  Scene helpers
-// ─────────────────────────────────────────────────────────────
 function box(w:number, h:number, d:number, col:number, x:number, y:number, z:number): THREE.Mesh {
-  const geo = new THREE.BoxGeometry(w, h, d)
-  const mat = new THREE.MeshLambertMaterial({ color: col })
-  const mesh = new THREE.Mesh(geo, mat)
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(w, h, d),
+    new THREE.MeshLambertMaterial({ color: col }),
+  )
   mesh.position.set(x, y, z)
   return mesh
 }
 
 function buildRoom(scene: THREE.Scene, r: RoomDef) {
-  const cx = r.x + r.w / 2
-  const cz = r.z + r.d / 2
+  const cx = r.x + r.w / 2, cz = r.z + r.d / 2
   const wy = r.floorY + WALL_H / 2
-  const wc = C.wallExt
 
   const floor = box(r.w, FLOOR_T, r.d, r.floorCol, cx, r.floorY - FLOOR_T / 2, cz)
   floor.userData = { roomId: r.id }
   scene.add(floor)
 
-  scene.add(box(r.w + WALL_T, WALL_H, WALL_T, wc, cx,        wy, r.z))
-  scene.add(box(r.w + WALL_T, WALL_H, WALL_T, wc, cx,        wy, r.z + r.d))
-  scene.add(box(WALL_T,       WALL_H, r.d,    wc, r.x,       wy, cz))
-  scene.add(box(WALL_T,       WALL_H, r.d,    wc, r.x + r.w, wy, cz))
+  scene.add(box(r.w + WALL_T, WALL_H, WALL_T,    C.wallExt, cx,        wy, r.z))
+  scene.add(box(r.w + WALL_T, WALL_H, WALL_T,    C.wallExt, cx,        wy, r.z + r.d))
+  scene.add(box(WALL_T,       WALL_H, r.d,        C.wallExt, r.x,       wy, cz))
+  scene.add(box(WALL_T,       WALL_H, r.d,        C.wallExt, r.x + r.w, wy, cz))
 
-  for (const item of r.items) {
-    scene.add(box(
-      item.w, item.h, item.d, item.col,
-      r.x + item.rx + item.w / 2,
-      r.floorY + item.h / 2,
-      r.z + item.rz + item.d / 2,
-    ))
+  for (const it of r.items) {
+    scene.add(box(it.w, it.h, it.d, it.col,
+      r.x + it.rx + it.w / 2, r.floorY + it.h / 2, r.z + it.rz + it.d / 2))
   }
 }
 
-// ─────────────────────────────────────────────────────────────
-//  Component
-// ─────────────────────────────────────────────────────────────
 interface Props { initialLights: HueLightsMap }
 type Floor = 'ground' | 'first'
 
@@ -212,87 +195,74 @@ export default function HomeScene({ initialLights }: Props) {
   const [error,    setError]    = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
-    try {
-      setLoading(true)
-      setLights(await fetchLights())
-      setError(null)
-    } catch {
-      setError('Bridge unreachable')
-    } finally {
-      setLoading(false)
-    }
+    try { setLoading(true); setLights(await fetchLights()); setError(null) }
+    catch { setError('Bridge unreachable') }
+    finally { setLoading(false) }
   }, [])
 
   const handleToggle = useCallback(async (light: HueLight) => {
     setToggling(light.id)
     try {
       await toggleLight(light.id, light.state.on)
-      setLights(prev => ({
-        ...prev,
-        [light.id]: { ...prev[light.id], state: { ...prev[light.id].state, on: !light.state.on } },
-      }))
-    } finally {
-      setToggling(null)
-    }
+      setLights(prev => ({ ...prev, [light.id]: { ...prev[light.id], state: { ...prev[light.id].state, on: !light.state.on } } }))
+    } finally { setToggling(null) }
   }, [])
 
-  // Sync point light intensities when Hue state changes
   useEffect(() => {
     for (const l of Object.values(lights)) {
-      const room = inferRoom(l.name)
-      if (!room) continue
-      const pl = plightsRef.current.get(room)
+      const pl = plightsRef.current.get(inferRoom(l.name) ?? '')
       if (!pl) continue
       if (l.state.on && l.state.reachable !== false) {
         const bri = l.state.bri ?? 200
-        pl.intensity = (bri / 254) * 2.2
-        pl.color.set(l.state.colormode === 'xy' && l.state.xy
-          ? xyBriToHex(l.state.xy, bri)
-          : WARM_WHITE_HEX)
+        pl.intensity = (bri / 254) * 4.0   // strong warm boost on top of ambient
+        pl.color.set(l.state.colormode === 'xy' && l.state.xy ? xyBriToHex(l.state.xy, bri) : WARM_WHITE_HEX)
       } else {
         pl.intensity = 0
       }
     }
   }, [lights])
 
-  // Build / rebuild Three.js scene on floor change
   useEffect(() => {
     const mount = mountRef.current
     if (!mount) return
 
     const renderer = new THREE.WebGLRenderer({ antialias: true })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-    renderer.setClearColor(BG_COLOR, 1)   // ← solid dark background, no iframe needed
-    renderer.shadowMap.enabled = false
+    renderer.setClearColor(BG, 1)
     mount.appendChild(renderer.domElement)
 
     const resize = () => {
       const w = mount.clientWidth, h = mount.clientHeight
       renderer.setSize(w, h)
-      const zoom = 9, aspect = w / h
+      const zoom = 9, asp = w / h
       if (camRef.current) {
-        const c = camRef.current
-        c.left = -zoom * aspect; c.right = zoom * aspect
-        c.top  =  zoom;           c.bottom = -zoom
-        c.updateProjectionMatrix()
+        Object.assign(camRef.current, { left:-zoom*asp, right:zoom*asp, top:zoom, bottom:-zoom })
+        camRef.current.updateProjectionMatrix()
       }
     }
     const ro = new ResizeObserver(resize)
     ro.observe(mount)
 
-    const zoom = 9, aspect = mount.clientWidth / mount.clientHeight
-    const cam = new THREE.OrthographicCamera(-zoom*aspect, zoom*aspect, zoom, -zoom, 0.1, 200)
+    const zoom = 9, asp = mount.clientWidth / mount.clientHeight
+    const cam = new THREE.OrthographicCamera(-zoom*asp, zoom*asp, zoom, -zoom, 0.1, 200)
     cam.position.set(20, 20, 20)
     cam.lookAt(4.3, 1.5, 4.8)
     camRef.current = cam
 
     const scene = new THREE.Scene()
-    scene.background = new THREE.Color(BG_COLOR)
+    scene.background = new THREE.Color(BG)
 
-    scene.add(new THREE.AmbientLight(0x080d1a, 1.0))
-    const dir = new THREE.DirectionalLight(0x4466aa, 0.25)
-    dir.position.set(-8, 15, -5)
-    scene.add(dir)
+    // ── Base lighting: bright enough to read everything clearly ──
+    // Cool blue ambient = "daytime with shutters closed" / blue sky fill
+    scene.add(new THREE.AmbientLight(0x4a6090, 3.5))
+    // Soft warm fill from above-right (simulates ceiling bounce)
+    const fill = new THREE.DirectionalLight(0x8899bb, 1.2)
+    fill.position.set(10, 20, 10)
+    scene.add(fill)
+    // Subtle back rim from opposite corner for depth
+    const rim = new THREE.DirectionalLight(0x334466, 0.4)
+    rim.position.set(-8, 8, -8)
+    scene.add(rim)
 
     const rooms = floor === 'ground' ? GROUND : FIRST
     for (const r of rooms) buildRoom(scene, r)
@@ -303,42 +273,36 @@ export default function HomeScene({ initialLights }: Props) {
       if (floor === 'ground' && onFirst)  continue
       if (floor === 'first'  && !onFirst) continue
 
+      // Fixture glow sphere
       const fix = new THREE.Mesh(
         new THREE.SphereGeometry(0.1, 8, 8),
-        new THREE.MeshBasicMaterial({ color: 0xffeedd }),
+        new THREE.MeshBasicMaterial({ color: 0xfff0dd }),
       )
       fix.position.set(pos.x, pos.y, pos.z)
       scene.add(fix)
 
-      const pl = new THREE.PointLight(0xffd49a, 0, 6, 1.8)
+      // Point light: off by default, strong warm when on
+      const pl = new THREE.PointLight(0xffd49a, 0, 8, 1.6)
       pl.position.set(pos.x, pos.y - 0.3, pos.z)
       scene.add(pl)
       pls.set(roomId, pl)
     }
     plightsRef.current = pls
 
-    // Hydrate lights into scene
+    // Hydrate initial Hue state
     for (const l of Object.values(lights)) {
-      const room = inferRoom(l.name)
-      if (!room) continue
-      const pl = pls.get(room)
+      const pl = pls.get(inferRoom(l.name) ?? '')
       if (!pl || !l.state.on || l.state.reachable === false) continue
       const bri = l.state.bri ?? 200
-      pl.intensity = (bri / 254) * 2.2
+      pl.intensity = (bri / 254) * 4.0
       if (l.state.colormode === 'xy' && l.state.xy) pl.color.set(xyBriToHex(l.state.xy, bri))
     }
 
-    const animate = () => {
-      rafRef.current = requestAnimationFrame(animate)
-      renderer.render(scene, cam)
-    }
-    animate()
-    resize()
+    const animate = () => { rafRef.current = requestAnimationFrame(animate); renderer.render(scene, cam) }
+    animate(); resize()
 
     return () => {
-      cancelAnimationFrame(rafRef.current)
-      ro.disconnect()
-      renderer.dispose()
+      cancelAnimationFrame(rafRef.current); ro.disconnect(); renderer.dispose()
       if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -350,14 +314,13 @@ export default function HomeScene({ initialLights }: Props) {
     return WARM_WHITE_HEX
   }
 
-  const lightList   = Object.values(lights)
+  const lightList    = Object.values(lights)
   const groundLights = lightList.filter(l => { const r = inferRoom(l.name); return r ? GROUND.some(g => g.id === r) : true })
   const firstLights  = lightList.filter(l => { const r = inferRoom(l.name); return r ? FIRST.some(f => f.id === r) : false })
   const activeList   = floor === 'ground' ? groundLights : firstLights
   const unassigned   = lightList.filter(l => !inferRoom(l.name))
 
   return (
-    // ── Outer shell: solid --bg, no iframe ──────────────────────
     <div style={{ position:'fixed', inset:0, background:'var(--bg)', display:'flex', flexDirection:'column', fontFamily:'var(--font-body)', color:'var(--ink)' }}>
 
       {/* Topbar */}
@@ -365,9 +328,7 @@ export default function HomeScene({ initialLights }: Props) {
         <a href="/portal" style={{ color:'var(--ink-3)', textDecoration:'none', fontSize:12, fontFamily:'var(--font-mono)', letterSpacing:'.1em' }}>← Portal</a>
         <div className="brand" style={{ marginLeft:8 }}>
           <div className="brand__mark">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path d="M8 2L14 6v4L8 14 2 10V6L8 2z" fill="currentColor"/>
-            </svg>
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2L14 6v4L8 14 2 10V6L8 2z" fill="currentColor"/></svg>
           </div>
           <span className="brand__name">Ghostlink</span>
           <span className="brand__dot">.home</span>
@@ -387,19 +348,13 @@ export default function HomeScene({ initialLights }: Props) {
           ))}
         </div>
 
-        <button onClick={refresh} disabled={loading} style={{
-          padding:'7px 14px', borderRadius:'var(--r-pill)', border:'1px solid var(--edge)',
-          background:'transparent', color:'var(--ink-3)', fontSize:11,
-          fontFamily:'var(--font-mono)', cursor:'pointer', letterSpacing:'.1em', opacity: loading ? .5 : 1,
-        }}>
+        <button onClick={refresh} disabled={loading} style={{ padding:'7px 14px', borderRadius:'var(--r-pill)', border:'1px solid var(--edge)', background:'transparent', color:'var(--ink-3)', fontSize:11, fontFamily:'var(--font-mono)', cursor:'pointer', letterSpacing:'.1em', opacity: loading ? .5 : 1 }}>
           {loading ? '···' : '⟳ SYNC'}
         </button>
       </div>
 
       {/* Main */}
       <div style={{ flex:1, display:'flex', overflow:'hidden' }}>
-
-        {/* Canvas */}
         <div ref={mountRef} style={{ flex:1, position:'relative' }} />
 
         {/* Light panel */}
@@ -407,9 +362,7 @@ export default function HomeScene({ initialLights }: Props) {
           <div style={{ padding:'18px 20px 12px', borderBottom:'1px solid var(--edge)' }}>
             <div className="eyebrow" style={{ marginBottom:4 }}>Philips Hue</div>
             <div style={{ fontSize:13, color:'var(--ink-2)' }}>
-              {lightList.length
-                ? `${lightList.filter(l=>l.state.on).length} / ${lightList.length} aan`
-                : 'Geen verbinding'}
+              {lightList.length ? `${lightList.filter(l=>l.state.on).length} / ${lightList.length} aan` : 'Geen verbinding'}
             </div>
           </div>
 

@@ -15,27 +15,6 @@ const TradingIcon = () => (
   </svg>
 )
 
-const HomeIcon = () => (
-  <svg width="52" height="52" viewBox="0 0 52 52" fill="none" style={{ marginBottom: 4 }}>
-    <path d="M26 4L46 15v22L26 48 6 37V15L26 4z"
-      stroke="rgba(255,220,100,.35)" strokeWidth="1" fill="rgba(255,220,100,.05)" />
-    <path d="M26 12L38 19v14L26 40 14 33V19L26 12z"
-      stroke="rgba(255,220,100,.18)" strokeWidth="1" fill="rgba(255,220,100,.04)" />
-    {/* House outline */}
-    <path d="M26 20 L32 24 L32 33 L20 33 L20 24 Z"
-      stroke="rgba(255,210,80,.7)" strokeWidth="1.4" fill="rgba(255,210,80,.08)" strokeLinejoin="round" />
-    {/* Roof */}
-    <path d="M18 25 L26 18 L34 25"
-      stroke="rgba(255,210,80,.7)" strokeWidth="1.4" fill="none" strokeLinejoin="round" strokeLinecap="round" />
-    {/* Door */}
-    <rect x="23.5" y="27" width="5" height="6" rx="0.5"
-      stroke="rgba(255,210,80,.5)" strokeWidth="1" fill="rgba(255,210,80,.12)" />
-    {/* Light glow dots */}
-    <circle cx="22" cy="25" r="1" fill="rgba(255,220,80,.6)" />
-    <circle cx="30" cy="25" r="1" fill="rgba(255,220,80,.6)" />
-  </svg>
-)
-
 export default function PortalPage() {
   const supabase = createClient()
   const router = useRouter()
@@ -99,7 +78,7 @@ export default function PortalPage() {
               <span className="brand__dot">.one</span>
             </div>
             <div className="topbar__right">
-              <span className="chip">{projects.length + 2} module{projects.length + 2 !== 1 ? 's' : ''}</span>
+              <span className="chip">{projects.length + 1} module{projects.length + 1 !== 1 ? 's' : ''}</span>
               {avatarImg
                 ? <img src={avatarImg} alt="" style={{ width: 38, height: 38, borderRadius: '50%', border: '2px solid var(--edge-strong)', boxShadow: '0 0 18px var(--glow)' }} />
                 : <div className="avatar">{initials}</div>
@@ -115,7 +94,6 @@ export default function PortalPage() {
                 <div className="portal__lead">Each project lives at its own subdomain with its own stack.</div>
               </div>
               <div className="grid">
-                {/* Fixed: Trading Bot module */}
                 <a className="widget glass" href="/portal/trading"
                   style={{ background: 'linear-gradient(160deg, rgba(13,20,38,.6) 0%, rgba(6,15,30,.8) 100%)', borderColor: 'rgba(150,190,255,.28)' }}>
                   <div className="widget__glow" style={{ background: 'radial-gradient(120% 80% at 50% 120%, rgba(100,180,255,.4), transparent 60%)' }} />
@@ -126,18 +104,6 @@ export default function PortalPage() {
                   <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>Live dashboard · Alpaca paper</div>
                 </a>
 
-                {/* Fixed: Home module */}
-                <a className="widget glass" href="/portal/home"
-                  style={{ background: 'linear-gradient(160deg, rgba(28,18,8,.6) 0%, rgba(18,12,4,.8) 100%)', borderColor: 'rgba(255,200,80,.22)' }}>
-                  <div className="widget__glow" style={{ background: 'radial-gradient(120% 80% at 50% 120%, rgba(255,180,60,.35), transparent 60%)' }} />
-                  <span className="widget__id mono">HM</span>
-                  <HomeIcon />
-                  <div className="widget__label">Home</div>
-                  <div className="widget__sub">Philips Hue · Smart home</div>
-                  <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>Isometric · 3D floor plan</div>
-                </a>
-
-                {/* Dynamic projects */}
                 {projects.map((p, i) => {
                   const url = p.subdomain ? `https://${p.subdomain}.ghostlink.one` : p.repo_url || '#'
                   return (

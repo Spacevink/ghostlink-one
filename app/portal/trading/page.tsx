@@ -83,7 +83,20 @@ export default function TradingPage() {
 
   // Benchmark normalisation: first SPY close = $100k reference
   const spyStart = snapshots.find(s => s.spy_close != null)?.spy_close ?? null
-  const chartData = snapshots.map(s => ({
+
+  // Collapse to one point per calendar day — keep the latest snapshot (closest to
+  // end-of-day). This pairs the bot's EOD value with SPY's daily close for a fair
+  // comparison, and folds away restart-triggered duplicate snapshots that were
+  // making each date appear more than once on the chart.
+  const dailySnapshots = Object.values(
+    snapshots.reduce((acc: Record<string, any>, s) => {
+      const key = String(s.created_at).slice(0, 10) // 'YYYY-MM-DD'
+      if (!acc[key] || new Date(s.created_at) > new Date(acc[key].created_at)) acc[key] = s
+      return acc
+    }, {} as Record<string, any>)
+  ).sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+
+  const chartData = dailySnapshots.map((s: any) => ({
     date:      new Date(s.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
     bot:       Number(s.portfolio_value),
     benchmark: spyStart && s.spy_close ? Math.round(100000 * Number(s.spy_close) / spyStart) : null,

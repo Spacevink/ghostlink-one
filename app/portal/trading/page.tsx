@@ -40,20 +40,26 @@ export default function TradingPage() {
   const [circuitBreaker, setCircuitBreaker] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [loading, setLoading] = useState(true)
+  const [scanActivity, setScanActivity] = useState<any[]>([])
+  const [shadowTrades, setShadowTrades] = useState<any[]>([])
 
   const refresh = useCallback(async () => {
-    const [s, p, t, r, hb] = await Promise.all([
+    const [s, p, t, r, hb, sa, sh] = await Promise.all([
       trading.from('portfolio_snapshots').select('*').order('created_at', { ascending: true }).limit(60),
       trading.from('positions').select('*').eq('status', 'open').order('created_at', { ascending: false }),
       trading.from('trades').select('*').order('created_at', { ascending: false }).limit(30),
       trading.from('regime_history').select('*').order('created_at', { ascending: false }).limit(1),
       trading.from('heartbeats').select('*').order('created_at', { ascending: false }).limit(1),
+      trading.from('scan_activity').select('*').order('created_at', { ascending: false }).limit(10),
+      trading.from('shadow_trades').select('*').order('created_at', { ascending: false }).limit(10),
     ])
     if (s.data) setSnapshots(s.data)
     if (p.data) setPositions(p.data)
     if (t.data) setTrades(t.data)
     if (r.data?.length) setRegime({ label: r.data[0].regime_label, confidence: r.data[0].confidence })
     if (hb.data?.length) { setHeartbeat(hb.data[0]); setCircuitBreaker(hb.data[0].circuit_breaker) }
+    if (sa.data) setScanActivity(sa.data)
+    if (sh.data) setShadowTrades(sh.data)
     setLastUpdated(new Date())
     setLoading(false)
   }, [])
@@ -66,6 +72,8 @@ export default function TradingPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'trades' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'regime_history' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'heartbeats' }, refresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'scan_activity' }, refresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shadow_trades' }, refresh)
       .subscribe()
     return () => { trading.removeChannel(ch) }
   }, [refresh])
@@ -102,6 +110,10 @@ export default function TradingPage() {
     benchmark: spyStart && s.spy_close ? Math.round(100000 * Number(s.spy_close) / spyStart) : null,
     pnl:       Number(s.total_pnl),
   }))
+
+  // Most recent scan cycle = the batch sharing the latest timestamp's minute bucket.
+  // We just show the latest N rows (already top-by-|z| from the engine), newest first.
+  const latestScanAt = scanActivity[0]?.created_at ?? null
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (!active || !payload?.length) return null
@@ -237,7 +249,7 @@ export default function TradingPage() {
         </div>
 
         {/* Positions + Trade log */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
           <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '22px 24px' }}>
             <div className="eyebrow" style={{ marginBottom: 16 }}>Open Positions</div>
             {positions.length === 0 ? (
@@ -297,6 +309,102 @@ export default function TradingPage() {
                         </td>
                       </tr>
                     ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Scanner Activity + Shadow Trades */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+          <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '22px 24px', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+              <div className="eyebrow">Scanner Activity</div>
+              {latestScanAt && <span style={{ fontSize: 11, color: 'var(--ink-3)', fontFamily: 'var(--font-mono)' }}>{timeAgo(latestScanAt)}</span>}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 14 }}>
+              Top candidate pairs by |z-score| — every scan cycle, regardless of regime
+            </div>
+            {scanActivity.length === 0 ? (
+              <div style={{ color: 'var(--ink-3)', fontSize: 13, padding: '24px 0', textAlign: 'center' }}>No scans logged yet</div>
+            ) : (
+              <div style={{ overflowY: 'auto', maxHeight: 320 }}>
+                <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ color: 'var(--ink-3)', fontSize: 10, letterSpacing: '.12em', textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>
+                      {['Pair', '|Z|', 'vs Threshold', 'Regime'].map(h => (
+                        <th key={h} style={{ textAlign: h === 'Pair' ? 'left' : h === 'Regime' ? 'left' : 'right', paddingBottom: 10, paddingRight: 10, borderBottom: '1px solid var(--edge)' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scanActivity.map(row => {
+                      const az = Math.abs(Number(row.zscore))
+                      const pct = Math.min(100, Math.round((az / Number(row.entry_threshold || 1)) * 100))
+                      const rcfg = REGIME_CONFIG[row.regime_label] ?? REGIME_CONFIG.initialising
+                      return (
+                        <tr key={row.id} style={{ borderBottom: '1px solid rgba(160,195,255,.05)' }}>
+                          <td style={{ padding: '8px 10px 8px 0', fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--ice)' }}>{row.sym1}/{row.sym2}</td>
+                          <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', fontWeight: 600, color: row.would_enter ? '#22c55e' : 'var(--ink-2)' }}>{fmt(az)}</td>
+                          <td style={{ paddingRight: 10 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end' }}>
+                              <div style={{ width: 50, height: 5, borderRadius: 3, background: 'rgba(160,195,255,.1)', overflow: 'hidden' }}>
+                                <div style={{ width: `${pct}%`, height: '100%', background: row.would_enter ? '#22c55e' : '#5f7088', borderRadius: 3 }} />
+                              </div>
+                              <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: row.would_enter ? '#22c55e' : 'var(--ink-3)', minWidth: 30, textAlign: 'right' }}>
+                                {row.would_enter ? '✓ fires' : `${pct}%`}
+                              </span>
+                            </div>
+                          </td>
+                          <td style={{ paddingLeft: 10 }}>
+                            <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: rcfg.color }}>{rcfg.label}</span>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '22px 24px', overflow: 'hidden' }}>
+            <div className="eyebrow" style={{ marginBottom: 4 }}>Shadow Trades</div>
+            <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 14 }}>
+              Hypothetical entries the engine would've made if it weren't standing aside — never executed
+            </div>
+            {shadowTrades.length === 0 ? (
+              <div style={{ color: 'var(--ink-3)', fontSize: 13, padding: '24px 0', textAlign: 'center' }}>
+                No shadow signals yet — these appear when strong setups occur outside mean-reverting regime
+              </div>
+            ) : (
+              <div style={{ overflowY: 'auto', maxHeight: 320 }}>
+                <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ color: 'var(--ink-3)', fontSize: 10, letterSpacing: '.12em', textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>
+                      {['Time', 'Pair', 'Dir', 'Z', 'Regime'].map(h => (
+                        <th key={h} style={{ textAlign: ['Pair','Dir','Time'].includes(h) ? 'left' : 'right', paddingBottom: 10, paddingRight: 10, borderBottom: '1px solid var(--edge)' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {shadowTrades.map(row => {
+                      const rcfg = REGIME_CONFIG[row.regime_label] ?? REGIME_CONFIG.initialising
+                      return (
+                        <tr key={row.id} style={{ borderBottom: '1px solid rgba(160,195,255,.05)' }}>
+                          <td style={{ padding: '8px 10px 8px 0', color: 'var(--ink-3)', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>
+                            {new Date(row.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          </td>
+                          <td style={{ paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink)' }}>{row.sym1}/{row.sym2}</td>
+                          <td style={{ paddingRight: 10, color: row.direction === 'long_spread' ? '#22c55e' : '#ef4444' }}>{row.direction === 'long_spread' ? '↑' : '↓'}</td>
+                          <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-3)' }}>{fmt(row.zscore)}</td>
+                          <td style={{ textAlign: 'right' }}>
+                            <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: rcfg.color }}>{rcfg.label}</span>
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>

@@ -42,13 +42,14 @@ export default function TradingPage() {
   const [loading, setLoading] = useState(true)
   const [scanActivity, setScanActivity] = useState<any[]>([])
   const [shadowTrades, setShadowTrades] = useState<any[]>([])
+  const [regimeHistory, setRegimeHistory] = useState<any[]>([])
 
   const refresh = useCallback(async () => {
-    const [s, p, t, r, hb, sa, sh] = await Promise.all([
+    const [s, p, t, rh, hb, sa, sh] = await Promise.all([
       trading.from('portfolio_snapshots').select('*').order('created_at', { ascending: true }).limit(60),
       trading.from('positions').select('*').eq('status', 'open').order('created_at', { ascending: false }),
       trading.from('trades').select('*').order('created_at', { ascending: false }).limit(30),
-      trading.from('regime_history').select('*').order('created_at', { ascending: false }).limit(1),
+      trading.from('regime_history').select('*').order('created_at', { ascending: false }).limit(60),
       trading.from('heartbeats').select('*').order('created_at', { ascending: false }).limit(1),
       trading.from('scan_activity').select('*').order('created_at', { ascending: false }).limit(10),
       trading.from('shadow_trades').select('*').order('created_at', { ascending: false }).limit(10),
@@ -56,7 +57,10 @@ export default function TradingPage() {
     if (s.data) setSnapshots(s.data)
     if (p.data) setPositions(p.data)
     if (t.data) setTrades(t.data)
-    if (r.data?.length) setRegime({ label: r.data[0].regime_label, confidence: r.data[0].confidence })
+    if (rh.data?.length) {
+      setRegime({ label: rh.data[0].regime_label, confidence: rh.data[0].confidence })
+      setRegimeHistory([...rh.data].reverse()) // chronological for the timeline
+    }
     if (hb.data?.length) { setHeartbeat(hb.data[0]); setCircuitBreaker(hb.data[0].circuit_breaker) }
     if (sa.data) setScanActivity(sa.data)
     if (sh.data) setShadowTrades(sh.data)
@@ -114,6 +118,33 @@ export default function TradingPage() {
   // Most recent scan cycle = the batch sharing the latest timestamp's minute bucket.
   // We just show the latest N rows (already top-by-|z| from the engine), newest first.
   const latestScanAt = scanActivity[0]?.created_at ?? null
+
+  // Regime timeline: collapse consecutive identical readings into spans, each
+  // spanning from its first reading to the moment the regime next changed (or
+  // "now" for the current span). Width is proportional to wall-clock duration,
+  // so a 3-day trending stretch visually dwarfs a 15-minute blip.
+  const regimeSpans = (() => {
+    if (!regimeHistory.length) return []
+    const spans: { label: string; color: string; start: Date; end: Date; confidence: number }[] = []
+    for (const r of regimeHistory) {
+      const cfg = REGIME_CONFIG[r.regime_label] ?? REGIME_CONFIG.initialising
+      const start = new Date(r.created_at)
+      const last = spans[spans.length - 1]
+      if (last && last.label === r.regime_label) {
+        last.end = start
+      } else {
+        spans.push({ label: r.regime_label, color: cfg.color, start, end: start, confidence: Number(r.confidence) })
+      }
+    }
+    spans[spans.length - 1].end = new Date() // extend current regime to "now"
+    const totalMs = spans.reduce((sum, sp) => sum + Math.max(sp.end.getTime() - sp.start.getTime(), 30 * 60 * 1000), 0)
+    return spans.map(sp => ({
+      ...sp,
+      pct: Math.max(2, ((Math.max(sp.end.getTime() - sp.start.getTime(), 30 * 60 * 1000)) / totalMs) * 100),
+    }))
+  })()
+  const timelineStart = regimeHistory[0]?.created_at ?? null
+  const timelineEnd   = regimeHistory.length ? regimeHistory[regimeHistory.length - 1]?.created_at : null
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (!active || !payload?.length) return null
@@ -216,6 +247,63 @@ export default function TradingPage() {
             <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 6, background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.2)', fontSize: 11, fontFamily: 'var(--font-mono)', color: '#ef4444' }}>
               {heartbeat.error_msg}
             </div>
+          )}
+        </div>
+
+        {/* Regime History Timeline */}
+        <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '22px 24px', marginBottom: 24 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+            <div className="eyebrow">Regime Timeline</div>
+            <div style={{ display: 'flex', gap: 14, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
+              {Object.entries(REGIME_CONFIG).filter(([k]) => k !== 'initialising').map(([k, c]) => (
+                <span key={k} style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--ink-3)' }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: c.color, display: 'inline-block' }} />
+                  {c.label}
+                </span>
+              ))}
+            </div>
+          </div>
+          {regimeSpans.length === 0 ? (
+            <div style={{ height: 64, display: 'grid', placeItems: 'center', color: 'var(--ink-3)', fontSize: 13 }}>
+              Timeline appears once the engine has logged a few regime readings
+            </div>
+          ) : (
+            <>
+              <div style={{ display: 'flex', width: '100%', height: 28, borderRadius: 6, overflow: 'hidden', border: '1px solid var(--edge)' }}>
+                {regimeSpans.map((sp, i) => {
+                  const days = (sp.end.getTime() - sp.start.getTime()) / 86400000
+                  const dur = days >= 1 ? `${days.toFixed(1)}d` : `${Math.max(1, Math.round(days * 24))}h`
+                  return (
+                    <div
+                      key={i}
+                      title={`${REGIME_CONFIG[sp.label]?.label ?? sp.label} · ${sp.start.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} → ${sp.end.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · ~${dur} · confidence ${Math.round(sp.confidence * 100)}%`}
+                      style={{
+                        width: `${sp.pct}%`,
+                        background: sp.color,
+                        opacity: 0.75,
+                        borderRight: i < regimeSpans.length - 1 ? '1px solid var(--bg)' : 'none',
+                        cursor: 'default',
+                      }}
+                    />
+                  )
+                })}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-3)' }}>
+                <span>{timelineStart ? new Date(timelineStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}</span>
+                <span>now</span>
+              </div>
+              <div style={{ marginTop: 14, fontSize: 11, color: 'var(--ink-3)', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <span style={{ textTransform: 'uppercase', letterSpacing: '.1em', fontFamily: 'var(--font-mono)', fontSize: 10 }}>Recent transitions:</span>
+                {regimeSpans.slice(-6).map((sp, i, arr) => (
+                  <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ color: REGIME_CONFIG[sp.label]?.color ?? 'var(--ink-3)', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
+                      {REGIME_CONFIG[sp.label]?.label ?? sp.label}
+                    </span>
+                    {i < arr.length - 1 && <span style={{ color: 'var(--ink-3)' }}>→</span>}
+                  </span>
+                ))}
+              </div>
+            </>
           )}
         </div>
 

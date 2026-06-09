@@ -79,10 +79,6 @@ export default function TradingPage() {
   const [scalpSnaps,     setScalpSnaps]     = useState<any[]>([])
   const [scalpPositions, setScalpPositions] = useState<any[]>([])
   const [scalpTrades,    setScalpTrades]    = useState<any[]>([])
-  const [scalpStatus,    setScalpStatus]    = useState<any>(null)
-  // Live account summary (polled every 30s from engine)
-  const [accountSummary, setAccountSummary] = useState<any>(null)
-  const [acctUpdatedAt,  setAcctUpdatedAt]  = useState<Date | null>(null)
   // Collapsible panels
   const [statarbOpen, setStatarbOpen] = useState(true)
   const [scalpOpen,   setScalpOpen]   = useState(true)
@@ -117,28 +113,6 @@ export default function TradingPage() {
     setLoading(false)
   }, [])
 
-  // Poll engine every 30s for live account numbers + scalp status
-  useEffect(() => {
-    const engineUrl = process.env.NEXT_PUBLIC_ENGINE_URL
-    if (!engineUrl) return
-    const poll = async () => {
-      try {
-        const [acctRes, scalpRes] = await Promise.all([
-          fetch(`${engineUrl}/account-summary`),
-          fetch(`${engineUrl}/scalp-status`),
-        ])
-        if (acctRes.ok) {
-          const data = await acctRes.json()
-          if (!data.error) { setAccountSummary(data); setAcctUpdatedAt(new Date()) }
-        }
-        if (scalpRes.ok) setScalpStatus(await scalpRes.json())
-      } catch (_) {}
-    }
-    poll()
-    const id = setInterval(poll, 30_000)
-    return () => clearInterval(id)
-  }, [])
-
   useEffect(() => {
     refresh()
     const ch = trading.channel('trading-dash')
@@ -155,14 +129,17 @@ export default function TradingPage() {
     return () => { trading.removeChannel(ch) }
   }, [refresh])
 
-  // Derived values — prefer live Alpaca data for portfolio/today P&L
-  const latest        = snapshots.at(-1)
-  const portValue     = accountSummary?.equity     ?? latest?.portfolio_value ?? null
-  const totalPnl      = latest?.total_pnl          ?? null
-  const totalPnlPct   = portValue && totalPnl != null ? (totalPnl / (portValue - totalPnl)) * 100 : null
-  const todayPnl      = accountSummary?.today_pnl      ?? null
-  const todayPnlPct   = accountSummary?.today_pnl_pct  ?? null
-  const unrealizedPl  = accountSummary?.unrealized_pl  ?? null
+  // ── Derived values ──────────────────────────────────────────────────────────
+  // equity/today_pnl/today_pnl_pct come from the heartbeat row (engine pushes
+  // these to Supabase every 5 min during market hours). Falls back to Supabase
+  // snapshot values when the heartbeat doesn't carry them yet.
+  const latest       = snapshots.at(-1)
+  const portValue    = heartbeat?.equity     ?? latest?.portfolio_value ?? null
+  const totalPnl     = latest?.total_pnl     ?? null
+  const totalPnlPct  = portValue && totalPnl != null ? (totalPnl / (portValue - totalPnl)) * 100 : null
+  const todayPnl     = heartbeat?.today_pnl     ?? null
+  const todayPnlPct  = heartbeat?.today_pnl_pct ?? null
+  const hbUpdatedAt  = heartbeat?.created_at ? new Date(heartbeat.created_at) : null
 
   const closed   = trades.filter(t => t.status === 'closed' && t.pnl != null)
   const winRate  = closed.length ? (closed.filter(t => t.pnl > 0).length / closed.length) * 100 : null
@@ -325,9 +302,9 @@ export default function TradingPage() {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 24px', borderBottom: '1px solid var(--edge)' }}>
             <div className="eyebrow" style={{ margin: 0 }}>Portfolio Overview</div>
             <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--ink-3)' }}>
-              {acctUpdatedAt
-                ? `live · ${acctUpdatedAt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`
-                : 'polling…'}
+              {hbUpdatedAt
+                ? `via heartbeat · ${hbUpdatedAt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`
+                : 'waiting for heartbeat…'}
             </span>
           </div>
 
@@ -339,6 +316,7 @@ export default function TradingPage() {
                 value: portValue != null ? `$${fmt(portValue)}` : '—',
                 sub: 'Alpaca paper account',
                 color: undefined,
+                live: !!heartbeat?.equity,
               },
               {
                 label: 'Total P&L',
@@ -348,26 +326,27 @@ export default function TradingPage() {
                   : totalPnlPct != null ? `${totalPnlPct >= 0 ? '+' : ''}${fmt(totalPnlPct)}%` : 'realised P&L',
                 color: pnlColor(totalPnl),
                 warn: pnlUnexplained,
+                live: false,
               },
               {
                 label: 'Today P&L',
                 value: todayPnl != null ? `${todayPnl >= 0 ? '+' : ''}$${fmt(todayPnl)}` : '—',
-                sub: unrealizedPl != null ? `${unrealizedPl >= 0 ? '+' : ''}$${fmt(unrealizedPl)} unrealised` : 'equity − yesterday close',
+                sub: 'equity − yesterday close',
                 color: pnlColor(todayPnl),
-                live: true,
+                live: todayPnl != null,
               },
               {
                 label: 'Today P&L %',
                 value: todayPnlPct != null ? `${todayPnlPct >= 0 ? '+' : ''}${fmt(todayPnlPct, 3)}%` : '—',
                 sub: 'vs yesterday close',
                 color: pnlColor(todayPnlPct),
-                live: true,
+                live: todayPnlPct != null,
               },
             ].map((m: any, i, arr) => (
               <div key={m.label} style={{ padding: '16px 24px', borderRight: i < arr.length - 1 ? '1px solid var(--edge)' : 'none' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
                   <div style={{ fontSize: 10, letterSpacing: '.14em', color: 'var(--ink-3)', textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>{m.label}</div>
-                  {m.live && <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 999, background: 'rgba(34,197,94,.1)', color: '#22c55e', border: '1px solid rgba(34,197,94,.2)', fontFamily: 'var(--font-mono)', letterSpacing: '.06em' }}>LIVE</span>}
+                  {m.live && <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 999, background: 'rgba(34,197,94,.1)', color: '#22c55e', border: '1px solid rgba(34,197,94,.2)', fontFamily: 'var(--font-mono)', letterSpacing: '.06em' }}>5m</span>}
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 700, color: m.color ?? 'var(--ink)', fontFamily: 'var(--font-display)', letterSpacing: '-.01em', lineHeight: 1 }}>{m.value}</div>
                 <div style={{ fontSize: 11, color: m.warn ? '#f59e0b' : 'var(--ink-3)', marginTop: 4 }}>{m.sub}</div>
@@ -390,7 +369,7 @@ export default function TradingPage() {
                 <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(160,195,255,.08)" />
                   <XAxis dataKey="date" tick={{ fill: 'var(--ink-3)', fontSize: 11, fontFamily: 'var(--font-mono)' }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: 'var(--ink-3)', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={v => `$${(v / 1000).toFixed(0)}k`} domain={['auto', 'auto']} />
+                  <YAxis tick={{ fill: 'var(--ink-3)', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={v => `$${(v / 1000).toFixed(0)}k`} domain={[100000, 'auto']} />
                   <ReferenceLine y={100000} stroke="rgba(160,195,255,.12)" strokeDasharray="4 2" />
                   <Tooltip content={<CustomTooltip />} />
                   <Line type="monotone" dataKey="bot" stroke="#cfe3ff" strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#cfe3ff' }} />
@@ -431,8 +410,6 @@ export default function TradingPage() {
 
           {statarbOpen && (
             <div style={{ padding: '20px 24px' }}>
-
-              {/* Win Rate + Open Positions summary cards */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14, marginBottom: 20 }}>
                 {[
                   { label: 'Win Rate', value: winRate != null ? `${fmt(winRate, 1)}%` : '—', sub: `${closed.length} closed trades`, color: winRate != null ? (winRate >= 50 ? '#22c55e' : '#ef4444') : undefined },
@@ -641,7 +618,6 @@ export default function TradingPage() {
                   )}
                 </div>
               </div>
-
             </div>
           )}
         </div>
@@ -657,12 +633,6 @@ export default function TradingPage() {
               <span style={{ fontSize: 10, padding: '3px 8px', borderRadius: 999, background: 'rgba(34,197,94,.08)', color: '#22c55e', border: '1px solid rgba(34,197,94,.2)', fontFamily: 'var(--font-mono)' }}>
                 Intraday MR · Fade-only
               </span>
-              {scalpStatus?.daily_halt && (
-                <span style={{ fontSize: 10, padding: '3px 10px', borderRadius: 999, background: 'rgba(239,68,68,.12)', color: '#ef4444', border: '1px solid rgba(239,68,68,.3)', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>Daily halt</span>
-              )}
-              {scalpStatus?.hwm_halt && (
-                <span style={{ fontSize: 10, padding: '3px 10px', borderRadius: 999, background: 'rgba(245,158,11,.12)', color: '#f59e0b', border: '1px solid rgba(245,158,11,.3)', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>HWM halt</span>
-              )}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               {!scalpOpen && (
@@ -678,7 +648,6 @@ export default function TradingPage() {
 
           {scalpOpen && (
             <>
-              {/* Scalp metric cards */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', borderBottom: '1px solid var(--edge)' }}>
                 {[
                   { label: 'Sleeve Equity', value: scalpEquity != null ? `$${fmt(scalpEquity)}` : '—', sub: 'of $25k allocation', color: undefined },
@@ -694,12 +663,10 @@ export default function TradingPage() {
                 ))}
               </div>
 
-              {/* Scalp equity chart */}
               <div style={{ padding: '14px 24px 6px', borderBottom: '1px solid var(--edge)' }}>
                 <ScalpEquityChart snapshots={scalpSnaps} />
               </div>
 
-              {/* Open Scalp Positions + Scalp Trades */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
                 <div style={{ padding: '18px 24px', borderRight: '1px solid var(--edge)' }}>
                   <div className="eyebrow" style={{ marginBottom: 12, fontSize: 10 }}>Open Scalp Positions</div>

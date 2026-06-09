@@ -80,6 +80,8 @@ export default function TradingPage() {
   const [scalpPositions, setScalpPositions] = useState<any[]>([])
   const [scalpTrades,    setScalpTrades]    = useState<any[]>([])
   const [scalpStatus,    setScalpStatus]    = useState<any>(null)
+  // Collapsible panels
+  const [statarbOpen,    setStatarbOpen]    = useState(true)
 
   const refresh = useCallback(async () => {
     const [s, p, t, rh, hb, sa, sh, ssn, spo, stc] = await Promise.all([
@@ -150,7 +152,6 @@ export default function TradingPage() {
   const cfg         = REGIME_CONFIG[regime.label] ?? REGIME_CONFIG.initialising
   const hbAge       = heartbeat ? Math.floor((Date.now() - new Date(heartbeat.created_at).getTime()) / 60000) : null
 
-  // 3-state engine health: green <2h · yellow 2–24h (market closed/weekend) · red >24h
   const engineState: 'ok' | 'stale' | 'down' =
     !heartbeat || heartbeat.status !== 'ok' || hbAge === null ? 'down'
     : hbAge < 120  ? 'ok'
@@ -158,7 +159,6 @@ export default function TradingPage() {
     : 'down'
   const engineDotColor = engineState === 'ok' ? '#22c55e' : engineState === 'stale' ? '#f59e0b' : '#ef4444'
 
-  // P&L without any logged trades = Alpaca account activity from before trade-logging was in place
   const pnlUnexplained = totalPnl != null && Math.abs(totalPnl) > 0 && trades.length === 0
 
   const spyStart = snapshots.find(s => s.spy_close != null)?.spy_close ?? null
@@ -234,11 +234,9 @@ export default function TradingPage() {
   )
 
   return (
-    // height+overflowY makes this page its own scroll container,
-    // bypassing the global body { overflow: hidden } from globals.css
     <div style={{ height: '100vh', overflowY: 'auto', background: 'var(--bg)', color: 'var(--ink)', fontFamily: 'var(--font-body)', paddingBottom: 60 }}>
 
-      {/* Topbar — sticky within this scroll container */}
+      {/* Topbar */}
       <div className="topbar glass" style={{ borderBottom: '1px solid var(--edge)', position: 'sticky', top: 0, zIndex: 10 }}>
         <button onClick={() => router.push('/portal')}
           style={{ background: 'none', border: 'none', color: 'var(--ink-3)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 12, letterSpacing: '.1em', display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -270,40 +268,11 @@ export default function TradingPage() {
 
       <div style={{ maxWidth: 1100, margin: '0 auto', padding: '36px 28px 0' }}>
 
-        {/* StatArb Metrics */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 28 }}>
-          {[
-            { label: 'Portfolio Value', value: portValue != null ? `$${fmt(portValue)}` : '—', sub: 'Alpaca paper account', color: undefined },
-            {
-              label: 'Total P&L',
-              value: totalPnl != null ? `${totalPnl >= 0 ? '+' : ''}$${fmt(totalPnl)}` : '—',
-              sub: pnlUnexplained
-                ? 'from Alpaca · no trades logged yet'
-                : totalPnlPct != null ? `${totalPnlPct >= 0 ? '+' : ''}${fmt(totalPnlPct)}%` : undefined,
-              color: pnlColor(totalPnl),
-              warning: pnlUnexplained,
-            },
-            { label: 'Win Rate', value: winRate != null ? `${fmt(winRate, 1)}%` : '—', sub: `${closed.length} closed trades`, color: winRate != null ? (winRate >= 50 ? '#22c55e' : '#ef4444') : undefined },
-            { label: 'Open Positions', value: String(positions.length), sub: positions.length ? positions.map(p => p.pair_id).join(', ') : 'none active', color: undefined },
-          ].map((m: any) => (
-            <div key={m.label} className="glass" style={{ borderRadius: 'var(--r-md)', padding: '18px 20px' }}>
-              <div style={{ fontSize: 11, letterSpacing: '.14em', color: 'var(--ink-3)', textTransform: 'uppercase', fontFamily: 'var(--font-mono)', marginBottom: 6 }}>{m.label}</div>
-              <div style={{ fontSize: 24, fontWeight: 700, color: m.color ?? 'var(--ink)', fontFamily: 'var(--font-display)', letterSpacing: '-.01em' }}>{m.value}</div>
-              {m.sub && (
-                <div style={{ fontSize: 11, color: m.warning ? '#f59e0b' : 'var(--ink-3)', marginTop: 3 }}>
-                  {m.warning && '⚠ '}{m.sub}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-
         {/* System Health */}
         <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '18px 24px', marginBottom: 24 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
             <div className="eyebrow">System Health</div>
             <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
-              {/* Engine — 3-state */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                 <span style={{ width: 7, height: 7, borderRadius: '50%', background: engineDotColor, display: 'inline-block' }} />
                 <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)' }}>Engine</span>
@@ -334,81 +303,279 @@ export default function TradingPage() {
           )}
         </div>
 
-        {/* Regime Timeline */}
-        <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '22px 24px', marginBottom: 24 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-            <div className="eyebrow">Regime Timeline</div>
-            <div style={{ display: 'flex', gap: 14, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
-              {Object.entries(REGIME_CONFIG).filter(([k]) => k !== 'initialising').map(([k, c]) => (
-                <span key={k} style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--ink-3)' }}>
-                  <span style={{ width: 8, height: 8, borderRadius: 2, background: c.color, display: 'inline-block' }} />
-                  {c.label}
-                </span>
-              ))}
+        {/* ── Stat Arb Strategy Panel (collapsible) ── */}
+        <div className="glass" style={{ borderRadius: 'var(--r-md)', marginBottom: 24, overflow: 'hidden' }}>
+          <div
+            onClick={() => setStatarbOpen(o => !o)}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 24px', borderBottom: statarbOpen ? '1px solid var(--edge)' : 'none', cursor: 'pointer', userSelect: 'none' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div className="eyebrow" style={{ margin: 0 }}>Stat Arb Strategy</div>
+              <span style={{ fontSize: 10, padding: '3px 8px', borderRadius: 999, background: 'rgba(160,195,255,.08)', color: 'var(--ice)', border: '1px solid rgba(160,195,255,.15)', fontFamily: 'var(--font-mono)' }}>
+                Pairs · Mean Reverting
+              </span>
             </div>
+            <span style={{ color: 'var(--ink-3)', fontSize: 13, fontFamily: 'var(--font-mono)' }}>
+              {statarbOpen ? '▲' : '▼'}
+            </span>
           </div>
-          {regimeSpans.length === 0 ? (
-            <div style={{ height: 64, display: 'grid', placeItems: 'center', color: 'var(--ink-3)', fontSize: 13 }}>
-              Timeline appears once the engine has logged a few regime readings
-            </div>
-          ) : (
-            <>
-              <div style={{ display: 'flex', width: '100%', height: 28, borderRadius: 6, overflow: 'hidden', border: '1px solid var(--edge)' }}>
-                {regimeSpans.map((sp, i) => {
-                  const days = (sp.end.getTime() - sp.start.getTime()) / 86400000
-                  const dur = days >= 1 ? `${days.toFixed(1)}d` : `${Math.max(1, Math.round(days * 24))}h`
-                  return (
-                    <div key={i}
-                      title={`${REGIME_CONFIG[sp.label]?.label ?? sp.label} · ${sp.start.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} → ${sp.end.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · ~${dur} · confidence ${Math.round(sp.confidence * 100)}%`}
-                      style={{ width: `${sp.pct}%`, background: sp.color, opacity: 0.75, borderRight: i < regimeSpans.length - 1 ? '1px solid var(--bg)' : 'none', cursor: 'default' }}
-                    />
-                  )
-                })}
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-3)' }}>
-                <span>{timelineStart ? new Date(timelineStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}</span>
-                <span>now</span>
-              </div>
-              <div style={{ marginTop: 14, fontSize: 11, color: 'var(--ink-3)', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                <span style={{ textTransform: 'uppercase', letterSpacing: '.1em', fontFamily: 'var(--font-mono)', fontSize: 10 }}>Recent transitions:</span>
-                {regimeSpans.slice(-6).map((sp, i, arr) => (
-                  <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ color: REGIME_CONFIG[sp.label]?.color ?? 'var(--ink-3)', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
-                      {REGIME_CONFIG[sp.label]?.label ?? sp.label}
-                    </span>
-                    {i < arr.length - 1 && <span style={{ color: 'var(--ink-3)' }}>→</span>}
-                  </span>
+
+          {statarbOpen && (
+            <div style={{ padding: '24px' }}>
+
+              {/* StatArb Metrics */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 24 }}>
+                {[
+                  { label: 'Portfolio Value', value: portValue != null ? `$${fmt(portValue)}` : '—', sub: 'Alpaca paper account', color: undefined },
+                  {
+                    label: 'Total P&L',
+                    value: totalPnl != null ? `${totalPnl >= 0 ? '+' : ''}$${fmt(totalPnl)}` : '—',
+                    sub: pnlUnexplained
+                      ? 'from Alpaca · no trades logged yet'
+                      : totalPnlPct != null ? `${totalPnlPct >= 0 ? '+' : ''}${fmt(totalPnlPct)}%` : undefined,
+                    color: pnlColor(totalPnl),
+                    warning: pnlUnexplained,
+                  },
+                  { label: 'Win Rate', value: winRate != null ? `${fmt(winRate, 1)}%` : '—', sub: `${closed.length} closed trades`, color: winRate != null ? (winRate >= 50 ? '#22c55e' : '#ef4444') : undefined },
+                  { label: 'Open Positions', value: String(positions.length), sub: positions.length ? positions.map(p => p.pair_id).join(', ') : 'none active', color: undefined },
+                ].map((m: any) => (
+                  <div key={m.label} className="glass" style={{ borderRadius: 'var(--r-md)', padding: '18px 20px' }}>
+                    <div style={{ fontSize: 11, letterSpacing: '.14em', color: 'var(--ink-3)', textTransform: 'uppercase', fontFamily: 'var(--font-mono)', marginBottom: 6 }}>{m.label}</div>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: m.color ?? 'var(--ink)', fontFamily: 'var(--font-display)', letterSpacing: '-.01em' }}>{m.value}</div>
+                    {m.sub && (
+                      <div style={{ fontSize: 11, color: m.warning ? '#f59e0b' : 'var(--ink-3)', marginTop: 3 }}>
+                        {m.warning && '⚠ '}{m.sub}
+                      </div>
+                    )}
+                  </div>
                 ))}
               </div>
-            </>
-          )}
-        </div>
 
-        {/* StatArb Equity Curve */}
-        <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '22px 24px', marginBottom: 24 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-            <div className="eyebrow">Equity Curve vs S&P 500</div>
-            <div style={{ display: 'flex', gap: 16, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
-              <span style={{ color: '#cfe3ff' }}>— Bot</span>
-              <span style={{ color: '#f59e0b' }}>— S&P 500</span>
-              <span style={{ color: 'var(--ink-3)' }}>base $100k</span>
-            </div>
-          </div>
-          {chartData.length > 1 ? (
-            <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(160,195,255,.08)" />
-                <XAxis dataKey="date" tick={{ fill: 'var(--ink-3)', fontSize: 11, fontFamily: 'var(--font-mono)' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: 'var(--ink-3)', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={v => `$${(v / 1000).toFixed(0)}k`} domain={['auto', 'auto']} />
-                <ReferenceLine y={100000} stroke="rgba(160,195,255,.12)" strokeDasharray="4 2" />
-                <Tooltip content={<CustomTooltip />} />
-                <Line type="monotone" dataKey="bot" stroke="#cfe3ff" strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#cfe3ff' }} />
-                <Line type="monotone" dataKey="benchmark" stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="5 3" dot={false} activeDot={{ r: 3, fill: '#f59e0b' }} connectNulls />
-              </LineChart>
-            </ResponsiveContainer>
-          ) : (
-            <div style={{ height: 220, display: 'grid', placeItems: 'center', color: 'var(--ink-3)', fontSize: 13 }}>
-              Chart appears after the first end-of-day snapshot
+              {/* Equity Curve */}
+              <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '22px 24px', marginBottom: 20 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+                  <div className="eyebrow">Equity Curve vs S&P 500</div>
+                  <div style={{ display: 'flex', gap: 16, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
+                    <span style={{ color: '#cfe3ff' }}>— Bot</span>
+                    <span style={{ color: '#f59e0b' }}>— S&P 500</span>
+                    <span style={{ color: 'var(--ink-3)' }}>base $100k</span>
+                  </div>
+                </div>
+                {chartData.length > 1 ? (
+                  <ResponsiveContainer width="100%" height={220}>
+                    <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(160,195,255,.08)" />
+                      <XAxis dataKey="date" tick={{ fill: 'var(--ink-3)', fontSize: 11, fontFamily: 'var(--font-mono)' }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fill: 'var(--ink-3)', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={v => `$${(v / 1000).toFixed(0)}k`} domain={['auto', 'auto']} />
+                      <ReferenceLine y={100000} stroke="rgba(160,195,255,.12)" strokeDasharray="4 2" />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Line type="monotone" dataKey="bot" stroke="#cfe3ff" strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#cfe3ff' }} />
+                      <Line type="monotone" dataKey="benchmark" stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="5 3" dot={false} activeDot={{ r: 3, fill: '#f59e0b' }} connectNulls />
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div style={{ height: 220, display: 'grid', placeItems: 'center', color: 'var(--ink-3)', fontSize: 13 }}>
+                    Chart appears after the first end-of-day snapshot
+                  </div>
+                )}
+              </div>
+
+              {/* Regime Timeline */}
+              <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '22px 24px', marginBottom: 20 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+                  <div className="eyebrow">Regime Timeline</div>
+                  <div style={{ display: 'flex', gap: 14, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
+                    {Object.entries(REGIME_CONFIG).filter(([k]) => k !== 'initialising').map(([k, c]) => (
+                      <span key={k} style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--ink-3)' }}>
+                        <span style={{ width: 8, height: 8, borderRadius: 2, background: c.color, display: 'inline-block' }} />
+                        {c.label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                {regimeSpans.length === 0 ? (
+                  <div style={{ height: 64, display: 'grid', placeItems: 'center', color: 'var(--ink-3)', fontSize: 13 }}>
+                    Timeline appears once the engine has logged a few regime readings
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ display: 'flex', width: '100%', height: 28, borderRadius: 6, overflow: 'hidden', border: '1px solid var(--edge)' }}>
+                      {regimeSpans.map((sp, i) => {
+                        const days = (sp.end.getTime() - sp.start.getTime()) / 86400000
+                        const dur = days >= 1 ? `${days.toFixed(1)}d` : `${Math.max(1, Math.round(days * 24))}h`
+                        return (
+                          <div key={i}
+                            title={`${REGIME_CONFIG[sp.label]?.label ?? sp.label} · ${sp.start.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} → ${sp.end.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · ~${dur} · confidence ${Math.round(sp.confidence * 100)}%`}
+                            style={{ width: `${sp.pct}%`, background: sp.color, opacity: 0.75, borderRight: i < regimeSpans.length - 1 ? '1px solid var(--bg)' : 'none', cursor: 'default' }}
+                          />
+                        )
+                      })}
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-3)' }}>
+                      <span>{timelineStart ? new Date(timelineStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}</span>
+                      <span>now</span>
+                    </div>
+                    <div style={{ marginTop: 14, fontSize: 11, color: 'var(--ink-3)', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <span style={{ textTransform: 'uppercase', letterSpacing: '.1em', fontFamily: 'var(--font-mono)', fontSize: 10 }}>Recent transitions:</span>
+                      {regimeSpans.slice(-6).map((sp, i, arr) => (
+                        <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ color: REGIME_CONFIG[sp.label]?.color ?? 'var(--ink-3)', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
+                            {REGIME_CONFIG[sp.label]?.label ?? sp.label}
+                          </span>
+                          {i < arr.length - 1 && <span style={{ color: 'var(--ink-3)' }}>→</span>}
+                        </span>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Open Positions + Trade Log */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+                <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '22px 24px' }}>
+                  <div className="eyebrow" style={{ marginBottom: 16 }}>Open Positions</div>
+                  {positions.length === 0 ? (
+                    <div style={{ color: 'var(--ink-3)', fontSize: 13, padding: '24px 0', textAlign: 'center' }}>No open positions</div>
+                  ) : (
+                    <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ color: 'var(--ink-3)', fontSize: 11, letterSpacing: '.12em', textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>
+                          {['Pair', 'Direction', 'Entry Z', 'Curr Z'].map(h => (
+                            <th key={h} style={{ textAlign: h === 'Pair' || h === 'Direction' ? 'left' : 'right', paddingBottom: 10, paddingRight: 12, borderBottom: '1px solid var(--edge)' }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {positions.map(p => (
+                          <tr key={p.id} style={{ borderBottom: '1px solid rgba(160,195,255,.06)' }}>
+                            <td style={{ padding: '10px 12px 10px 0', fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--ice)' }}>{p.pair_id}</td>
+                            <td style={{ padding: '10px 12px 10px 0' }}>
+                              <span style={{ padding: '3px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600, background: p.direction === 'long_spread' ? 'rgba(34,197,94,.12)' : 'rgba(239,68,68,.12)', color: p.direction === 'long_spread' ? '#22c55e' : '#ef4444' }}>
+                                {p.direction === 'long_spread' ? '↑ Long' : '↓ Short'}
+                              </span>
+                            </td>
+                            <td style={{ textAlign: 'right', paddingRight: 12, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)' }}>{fmt(p.entry_zscore)}</td>
+                            <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: Math.abs(p.current_zscore) > 2.5 ? '#ef4444' : 'var(--ink-3)' }}>{fmt(p.current_zscore)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+
+                <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '22px 24px', overflow: 'hidden' }}>
+                  <div className="eyebrow" style={{ marginBottom: 16 }}>Trade Log <span style={{ color: 'var(--ink-3)', textTransform: 'none', fontSize: 11, letterSpacing: 0 }}>last 30</span></div>
+                  {trades.length === 0 ? (
+                    <div style={{ color: 'var(--ink-3)', fontSize: 13, padding: '24px 0', textAlign: 'center' }}>No trades yet</div>
+                  ) : (
+                    <div style={{ overflowY: 'auto', maxHeight: 320 }}>
+                      <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ color: 'var(--ink-3)', fontSize: 10, letterSpacing: '.12em', textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>
+                            {['Time', 'Pair', 'Dir', 'Z', 'P&L'].map(h => (
+                              <th key={h} style={{ textAlign: ['Pair', 'Dir', 'Time'].includes(h) ? 'left' : 'right', paddingBottom: 10, paddingRight: 10, borderBottom: '1px solid var(--edge)' }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {trades.map(t => (
+                            <tr key={t.id} style={{ borderBottom: '1px solid rgba(160,195,255,.05)' }}>
+                              <td style={{ padding: '8px 10px 8px 0', color: 'var(--ink-3)', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>{new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</td>
+                              <td style={{ paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink)' }}>{t.pair_id}</td>
+                              <td style={{ paddingRight: 10, color: t.direction === 'long_spread' ? '#22c55e' : '#ef4444' }}>{t.direction === 'long_spread' ? '↑' : '↓'}</td>
+                              <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-3)' }}>{fmt(t.zscore)}</td>
+                              <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: pnlColor(t.pnl) }}>{t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}$${fmt(t.pnl)}` : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Scanner Activity + Shadow Trades */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+                <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '22px 24px', overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+                    <div className="eyebrow">Scanner Activity</div>
+                    {latestScanAt && <span style={{ fontSize: 11, color: 'var(--ink-3)', fontFamily: 'var(--font-mono)' }}>{timeAgo(latestScanAt)}</span>}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 14 }}>Top candidate pairs by |z-score| — every scan cycle, regardless of regime</div>
+                  {scanActivity.length === 0 ? (
+                    <div style={{ color: 'var(--ink-3)', fontSize: 13, padding: '24px 0', textAlign: 'center' }}>No scans logged yet</div>
+                  ) : (
+                    <div style={{ overflowY: 'auto', maxHeight: 320 }}>
+                      <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ color: 'var(--ink-3)', fontSize: 10, letterSpacing: '.12em', textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>
+                            {['Pair', '|Z|', 'vs Threshold', 'Regime'].map(h => (
+                              <th key={h} style={{ textAlign: h === 'Pair' ? 'left' : h === 'Regime' ? 'left' : 'right', paddingBottom: 10, paddingRight: 10, borderBottom: '1px solid var(--edge)' }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {scanActivity.map(row => {
+                            const az = Math.abs(Number(row.zscore))
+                            const pct = Math.min(100, Math.round((az / Number(row.entry_threshold || 1)) * 100))
+                            const rcfg = REGIME_CONFIG[row.regime_label] ?? REGIME_CONFIG.initialising
+                            return (
+                              <tr key={row.id} style={{ borderBottom: '1px solid rgba(160,195,255,.05)' }}>
+                                <td style={{ padding: '8px 10px 8px 0', fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--ice)' }}>{row.sym1}/{row.sym2}</td>
+                                <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', fontWeight: 600, color: row.would_enter ? '#22c55e' : 'var(--ink-2)' }}>{fmt(az)}</td>
+                                <td style={{ paddingRight: 10 }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end' }}>
+                                    <div style={{ width: 50, height: 5, borderRadius: 3, background: 'rgba(160,195,255,.1)', overflow: 'hidden' }}>
+                                      <div style={{ width: `${pct}%`, height: '100%', background: row.would_enter ? '#22c55e' : '#5f7088', borderRadius: 3 }} />
+                                    </div>
+                                    <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: row.would_enter ? '#22c55e' : 'var(--ink-3)', minWidth: 30, textAlign: 'right' }}>{row.would_enter ? '✓ fires' : `${pct}%`}</span>
+                                  </div>
+                                </td>
+                                <td style={{ paddingLeft: 10 }}><span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: rcfg.color }}>{rcfg.label}</span></td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '22px 24px', overflow: 'hidden' }}>
+                  <div className="eyebrow" style={{ marginBottom: 4 }}>Shadow Trades</div>
+                  <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 14 }}>Hypothetical entries the engine would've made if it weren't standing aside — never executed</div>
+                  {shadowTrades.length === 0 ? (
+                    <div style={{ color: 'var(--ink-3)', fontSize: 13, padding: '24px 0', textAlign: 'center' }}>No shadow signals yet — these appear when strong setups occur outside mean-reverting regime</div>
+                  ) : (
+                    <div style={{ overflowY: 'auto', maxHeight: 320 }}>
+                      <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ color: 'var(--ink-3)', fontSize: 10, letterSpacing: '.12em', textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>
+                            {['Time', 'Pair', 'Dir', 'Z', 'Regime'].map(h => (
+                              <th key={h} style={{ textAlign: ['Pair', 'Dir', 'Time'].includes(h) ? 'left' : 'right', paddingBottom: 10, paddingRight: 10, borderBottom: '1px solid var(--edge)' }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {shadowTrades.map(row => {
+                            const rcfg = REGIME_CONFIG[row.regime_label] ?? REGIME_CONFIG.initialising
+                            return (
+                              <tr key={row.id} style={{ borderBottom: '1px solid rgba(160,195,255,.05)' }}>
+                                <td style={{ padding: '8px 10px 8px 0', color: 'var(--ink-3)', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>{new Date(row.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</td>
+                                <td style={{ paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink)' }}>{row.sym1}/{row.sym2}</td>
+                                <td style={{ paddingRight: 10, color: row.direction === 'long_spread' ? '#22c55e' : '#ef4444' }}>{row.direction === 'long_spread' ? '↑' : '↓'}</td>
+                                <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-3)' }}>{fmt(row.zscore)}</td>
+                                <td style={{ textAlign: 'right' }}><span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: rcfg.color }}>{rcfg.label}</span></td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+
             </div>
           )}
         </div>
@@ -455,32 +622,44 @@ export default function TradingPage() {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
+            {/* Open Scalp Positions — thead fixed, tbody scrolls (~10 rows visible) */}
             <div style={{ padding: '18px 24px', borderRight: '1px solid var(--edge)' }}>
               <div className="eyebrow" style={{ marginBottom: 12, fontSize: 10 }}>Open Scalp Positions</div>
               {scalpPositions.length === 0 ? (
                 <div style={{ color: 'var(--ink-3)', fontSize: 13, padding: '20px 0', textAlign: 'center' }}>No open scalp positions</div>
               ) : (
-                <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr style={{ color: 'var(--ink-3)', fontSize: 10, letterSpacing: '.12em', textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>
-                      {['Symbol', 'Dir', 'Qty', 'Entry', 'Target', 'Stop'].map(h => (
-                        <th key={h} style={{ textAlign: h === 'Symbol' || h === 'Dir' ? 'left' : 'right', paddingBottom: 10, paddingRight: 10, borderBottom: '1px solid var(--edge)' }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {scalpPositions.map((p: any) => (
-                      <tr key={p.id} style={{ borderBottom: '1px solid rgba(160,195,255,.05)' }}>
-                        <td style={{ padding: '8px 10px 8px 0', fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--ice)' }}>{p.symbol}</td>
-                        <td style={{ paddingRight: 10, color: p.direction === 'long' ? '#22c55e' : '#ef4444', fontFamily: 'var(--font-mono)' }}>{p.direction === 'long' ? '↑' : '↓'}</td>
-                        <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)' }}>{p.qty}</td>
-                        <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)' }}>${fmt(p.entry_price)}</td>
-                        <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', color: '#22c55e' }}>${fmt(p.target)}</td>
-                        <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: '#ef4444' }}>${fmt(p.stop)}</td>
+                <>
+                  <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ color: 'var(--ink-3)', fontSize: 10, letterSpacing: '.12em', textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>
+                        {['Symbol', 'Dir', 'Qty', 'Entry', 'Target', 'Stop'].map(h => (
+                          <th key={h} style={{ textAlign: h === 'Symbol' || h === 'Dir' ? 'left' : 'right', paddingBottom: 10, paddingRight: 10, borderBottom: '1px solid var(--edge)' }}>{h}</th>
+                        ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                  </table>
+                  <div style={{ overflowY: 'auto', maxHeight: 280 }}>
+                    <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                      <tbody>
+                        {scalpPositions.map((p: any) => (
+                          <tr key={p.id} style={{ borderBottom: '1px solid rgba(160,195,255,.05)' }}>
+                            <td style={{ padding: '8px 10px 8px 0', fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--ice)', width: '20%' }}>{p.symbol}</td>
+                            <td style={{ paddingRight: 10, color: p.direction === 'long' ? '#22c55e' : '#ef4444', fontFamily: 'var(--font-mono)', width: '10%' }}>{p.direction === 'long' ? '↑' : '↓'}</td>
+                            <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)', width: '10%' }}>{p.qty}</td>
+                            <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)', width: '20%' }}>${fmt(p.entry_price)}</td>
+                            <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', color: '#22c55e', width: '20%' }}>${fmt(p.target)}</td>
+                            <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: '#ef4444', width: '20%' }}>${fmt(p.stop)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {scalpPositions.length > 10 && (
+                    <div style={{ marginTop: 6, fontSize: 10, color: 'var(--ink-3)', fontFamily: 'var(--font-mono)', textAlign: 'right' }}>
+                      {scalpPositions.length - 10} more · scroll to view
+                    </div>
+                  )}
+                </>
               )}
             </div>
 
@@ -521,152 +700,6 @@ export default function TradingPage() {
                 </div>
               )}
             </div>
-          </div>
-        </div>
-
-        {/* StatArb Positions + Trade log */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
-          <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '22px 24px' }}>
-            <div className="eyebrow" style={{ marginBottom: 16 }}>Open Positions</div>
-            {positions.length === 0 ? (
-              <div style={{ color: 'var(--ink-3)', fontSize: 13, padding: '24px 0', textAlign: 'center' }}>No open positions</div>
-            ) : (
-              <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ color: 'var(--ink-3)', fontSize: 11, letterSpacing: '.12em', textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>
-                    {['Pair', 'Direction', 'Entry Z', 'Curr Z'].map(h => (
-                      <th key={h} style={{ textAlign: h === 'Pair' || h === 'Direction' ? 'left' : 'right', paddingBottom: 10, paddingRight: 12, borderBottom: '1px solid var(--edge)' }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {positions.map(p => (
-                    <tr key={p.id} style={{ borderBottom: '1px solid rgba(160,195,255,.06)' }}>
-                      <td style={{ padding: '10px 12px 10px 0', fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--ice)' }}>{p.pair_id}</td>
-                      <td style={{ padding: '10px 12px 10px 0' }}>
-                        <span style={{ padding: '3px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600, background: p.direction === 'long_spread' ? 'rgba(34,197,94,.12)' : 'rgba(239,68,68,.12)', color: p.direction === 'long_spread' ? '#22c55e' : '#ef4444' }}>
-                          {p.direction === 'long_spread' ? '↑ Long' : '↓ Short'}
-                        </span>
-                      </td>
-                      <td style={{ textAlign: 'right', paddingRight: 12, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)' }}>{fmt(p.entry_zscore)}</td>
-                      <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: Math.abs(p.current_zscore) > 2.5 ? '#ef4444' : 'var(--ink-3)' }}>{fmt(p.current_zscore)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-
-          <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '22px 24px', overflow: 'hidden' }}>
-            <div className="eyebrow" style={{ marginBottom: 16 }}>Trade Log <span style={{ color: 'var(--ink-3)', textTransform: 'none', fontSize: 11, letterSpacing: 0 }}>last 30</span></div>
-            {trades.length === 0 ? (
-              <div style={{ color: 'var(--ink-3)', fontSize: 13, padding: '24px 0', textAlign: 'center' }}>No trades yet</div>
-            ) : (
-              <div style={{ overflowY: 'auto', maxHeight: 320 }}>
-                <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr style={{ color: 'var(--ink-3)', fontSize: 10, letterSpacing: '.12em', textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>
-                      {['Time', 'Pair', 'Dir', 'Z', 'P&L'].map(h => (
-                        <th key={h} style={{ textAlign: ['Pair', 'Dir', 'Time'].includes(h) ? 'left' : 'right', paddingBottom: 10, paddingRight: 10, borderBottom: '1px solid var(--edge)' }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {trades.map(t => (
-                      <tr key={t.id} style={{ borderBottom: '1px solid rgba(160,195,255,.05)' }}>
-                        <td style={{ padding: '8px 10px 8px 0', color: 'var(--ink-3)', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>{new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</td>
-                        <td style={{ paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink)' }}>{t.pair_id}</td>
-                        <td style={{ paddingRight: 10, color: t.direction === 'long_spread' ? '#22c55e' : '#ef4444' }}>{t.direction === 'long_spread' ? '↑' : '↓'}</td>
-                        <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-3)' }}>{fmt(t.zscore)}</td>
-                        <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: pnlColor(t.pnl) }}>{t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}$${fmt(t.pnl)}` : '—'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Scanner Activity + Shadow Trades */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
-          <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '22px 24px', overflow: 'hidden' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
-              <div className="eyebrow">Scanner Activity</div>
-              {latestScanAt && <span style={{ fontSize: 11, color: 'var(--ink-3)', fontFamily: 'var(--font-mono)' }}>{timeAgo(latestScanAt)}</span>}
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 14 }}>Top candidate pairs by |z-score| — every scan cycle, regardless of regime</div>
-            {scanActivity.length === 0 ? (
-              <div style={{ color: 'var(--ink-3)', fontSize: 13, padding: '24px 0', textAlign: 'center' }}>No scans logged yet</div>
-            ) : (
-              <div style={{ overflowY: 'auto', maxHeight: 320 }}>
-                <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr style={{ color: 'var(--ink-3)', fontSize: 10, letterSpacing: '.12em', textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>
-                      {['Pair', '|Z|', 'vs Threshold', 'Regime'].map(h => (
-                        <th key={h} style={{ textAlign: h === 'Pair' ? 'left' : h === 'Regime' ? 'left' : 'right', paddingBottom: 10, paddingRight: 10, borderBottom: '1px solid var(--edge)' }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {scanActivity.map(row => {
-                      const az = Math.abs(Number(row.zscore))
-                      const pct = Math.min(100, Math.round((az / Number(row.entry_threshold || 1)) * 100))
-                      const rcfg = REGIME_CONFIG[row.regime_label] ?? REGIME_CONFIG.initialising
-                      return (
-                        <tr key={row.id} style={{ borderBottom: '1px solid rgba(160,195,255,.05)' }}>
-                          <td style={{ padding: '8px 10px 8px 0', fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--ice)' }}>{row.sym1}/{row.sym2}</td>
-                          <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', fontWeight: 600, color: row.would_enter ? '#22c55e' : 'var(--ink-2)' }}>{fmt(az)}</td>
-                          <td style={{ paddingRight: 10 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end' }}>
-                              <div style={{ width: 50, height: 5, borderRadius: 3, background: 'rgba(160,195,255,.1)', overflow: 'hidden' }}>
-                                <div style={{ width: `${pct}%`, height: '100%', background: row.would_enter ? '#22c55e' : '#5f7088', borderRadius: 3 }} />
-                              </div>
-                              <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: row.would_enter ? '#22c55e' : 'var(--ink-3)', minWidth: 30, textAlign: 'right' }}>{row.would_enter ? '✓ fires' : `${pct}%`}</span>
-                            </div>
-                          </td>
-                          <td style={{ paddingLeft: 10 }}><span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: rcfg.color }}>{rcfg.label}</span></td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '22px 24px', overflow: 'hidden' }}>
-            <div className="eyebrow" style={{ marginBottom: 4 }}>Shadow Trades</div>
-            <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 14 }}>Hypothetical entries the engine would've made if it weren't standing aside — never executed</div>
-            {shadowTrades.length === 0 ? (
-              <div style={{ color: 'var(--ink-3)', fontSize: 13, padding: '24px 0', textAlign: 'center' }}>No shadow signals yet — these appear when strong setups occur outside mean-reverting regime</div>
-            ) : (
-              <div style={{ overflowY: 'auto', maxHeight: 320 }}>
-                <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr style={{ color: 'var(--ink-3)', fontSize: 10, letterSpacing: '.12em', textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>
-                      {['Time', 'Pair', 'Dir', 'Z', 'Regime'].map(h => (
-                        <th key={h} style={{ textAlign: ['Pair', 'Dir', 'Time'].includes(h) ? 'left' : 'right', paddingBottom: 10, paddingRight: 10, borderBottom: '1px solid var(--edge)' }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {shadowTrades.map(row => {
-                      const rcfg = REGIME_CONFIG[row.regime_label] ?? REGIME_CONFIG.initialising
-                      return (
-                        <tr key={row.id} style={{ borderBottom: '1px solid rgba(160,195,255,.05)' }}>
-                          <td style={{ padding: '8px 10px 8px 0', color: 'var(--ink-3)', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>{new Date(row.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</td>
-                          <td style={{ paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink)' }}>{row.sym1}/{row.sym2}</td>
-                          <td style={{ paddingRight: 10, color: row.direction === 'long_spread' ? '#22c55e' : '#ef4444' }}>{row.direction === 'long_spread' ? '↑' : '↓'}</td>
-                          <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-3)' }}>{fmt(row.zscore)}</td>
-                          <td style={{ textAlign: 'right' }}><span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: rcfg.color }}>{rcfg.label}</span></td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
           </div>
         </div>
 

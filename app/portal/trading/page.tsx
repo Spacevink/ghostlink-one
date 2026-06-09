@@ -90,7 +90,6 @@ export default function TradingPage() {
       trading.from('heartbeats').select('*').order('created_at', { ascending: false }).limit(1),
       trading.from('scan_activity').select('*').order('created_at', { ascending: false }).limit(10),
       trading.from('shadow_trades').select('*').order('created_at', { ascending: false }).limit(10),
-      // Scalp tables
       trading.from('scalp_equity_snapshots').select('*').order('created_at', { ascending: true }).limit(120),
       trading.from('scalp_trades').select('*').eq('status', 'open').order('created_at', { ascending: false }),
       trading.from('scalp_trades').select('*').eq('status', 'closed').order('closed_at', { ascending: false }).limit(20),
@@ -112,7 +111,6 @@ export default function TradingPage() {
     setLoading(false)
   }, [])
 
-  // Poll /scalp-status every 30s for daily_halt / hwm_halt circuit-breaker state
   useEffect(() => {
     const engineUrl = process.env.NEXT_PUBLIC_ENGINE_URL
     if (!engineUrl) return
@@ -152,17 +150,16 @@ export default function TradingPage() {
   const cfg         = REGIME_CONFIG[regime.label] ?? REGIME_CONFIG.initialising
   const hbAge       = heartbeat ? Math.floor((Date.now() - new Date(heartbeat.created_at).getTime()) / 60000) : null
 
-  // 3-state engine health:
-  //   'ok'     green  — heartbeat within 2h (engine actively running)
-  //   'stale'  yellow — heartbeat 2h–24h old (market closed / weekend / just restarted)
-  //   'down'   red    — heartbeat >24h old or missing
+  // 3-state engine health: green <2h · yellow 2–24h (market closed/weekend) · red >24h
   const engineState: 'ok' | 'stale' | 'down' =
     !heartbeat || heartbeat.status !== 'ok' || hbAge === null ? 'down'
     : hbAge < 120  ? 'ok'
     : hbAge < 1440 ? 'stale'
     : 'down'
-
   const engineDotColor = engineState === 'ok' ? '#22c55e' : engineState === 'stale' ? '#f59e0b' : '#ef4444'
+
+  // P&L without any logged trades = Alpaca account activity from before trade-logging was in place
+  const pnlUnexplained = totalPnl != null && Math.abs(totalPnl) > 0 && trades.length === 0
 
   const spyStart = snapshots.find(s => s.spy_close != null)?.spy_close ?? null
 
@@ -205,7 +202,6 @@ export default function TradingPage() {
   })()
   const timelineStart = regimeHistory[0]?.created_at ?? null
 
-  // Scalp metrics
   const latestScalp   = scalpSnaps.at(-1)
   const scalpEquity   = latestScalp?.sleeve_equity ?? null
   const scalpTotalPnl = latestScalp?.total_pnl ?? null
@@ -232,15 +228,17 @@ export default function TradingPage() {
   }
 
   if (loading) return (
-    <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--bg)', color: 'var(--ink-3)', fontFamily: 'var(--font-body)' }}>
+    <div style={{ height: '100vh', overflowY: 'auto', display: 'grid', placeItems: 'center', background: 'var(--bg)', color: 'var(--ink-3)', fontFamily: 'var(--font-body)' }}>
       Initialising trading data…
     </div>
   )
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg)', color: 'var(--ink)', fontFamily: 'var(--font-body)', padding: '0 0 60px' }}>
+    // height+overflowY makes this page its own scroll container,
+    // bypassing the global body { overflow: hidden } from globals.css
+    <div style={{ height: '100vh', overflowY: 'auto', background: 'var(--bg)', color: 'var(--ink)', fontFamily: 'var(--font-body)', paddingBottom: 60 }}>
 
-      {/* Topbar */}
+      {/* Topbar — sticky within this scroll container */}
       <div className="topbar glass" style={{ borderBottom: '1px solid var(--edge)', position: 'sticky', top: 0, zIndex: 10 }}>
         <button onClick={() => router.push('/portal')}
           style={{ background: 'none', border: 'none', color: 'var(--ink-3)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 12, letterSpacing: '.1em', display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -275,15 +273,27 @@ export default function TradingPage() {
         {/* StatArb Metrics */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 28 }}>
           {[
-            { label: 'Portfolio Value', value: portValue != null ? `$${fmt(portValue)}` : '—', sub: 'paper account', color: undefined },
-            { label: 'Total P&L', value: totalPnl != null ? `${totalPnl >= 0 ? '+' : ''}$${fmt(totalPnl)}` : '—', sub: totalPnlPct != null ? `${totalPnlPct >= 0 ? '+' : ''}${fmt(totalPnlPct)}%` : undefined, color: pnlColor(totalPnl) },
+            { label: 'Portfolio Value', value: portValue != null ? `$${fmt(portValue)}` : '—', sub: 'Alpaca paper account', color: undefined },
+            {
+              label: 'Total P&L',
+              value: totalPnl != null ? `${totalPnl >= 0 ? '+' : ''}$${fmt(totalPnl)}` : '—',
+              sub: pnlUnexplained
+                ? 'from Alpaca · no trades logged yet'
+                : totalPnlPct != null ? `${totalPnlPct >= 0 ? '+' : ''}${fmt(totalPnlPct)}%` : undefined,
+              color: pnlColor(totalPnl),
+              warning: pnlUnexplained,
+            },
             { label: 'Win Rate', value: winRate != null ? `${fmt(winRate, 1)}%` : '—', sub: `${closed.length} closed trades`, color: winRate != null ? (winRate >= 50 ? '#22c55e' : '#ef4444') : undefined },
             { label: 'Open Positions', value: String(positions.length), sub: positions.length ? positions.map(p => p.pair_id).join(', ') : 'none active', color: undefined },
-          ].map(m => (
+          ].map((m: any) => (
             <div key={m.label} className="glass" style={{ borderRadius: 'var(--r-md)', padding: '18px 20px' }}>
               <div style={{ fontSize: 11, letterSpacing: '.14em', color: 'var(--ink-3)', textTransform: 'uppercase', fontFamily: 'var(--font-mono)', marginBottom: 6 }}>{m.label}</div>
               <div style={{ fontSize: 24, fontWeight: 700, color: m.color ?? 'var(--ink)', fontFamily: 'var(--font-display)', letterSpacing: '-.01em' }}>{m.value}</div>
-              {m.sub && <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 3 }}>{m.sub}</div>}
+              {m.sub && (
+                <div style={{ fontSize: 11, color: m.warning ? '#f59e0b' : 'var(--ink-3)', marginTop: 3 }}>
+                  {m.warning && '⚠ '}{m.sub}
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -302,7 +312,6 @@ export default function TradingPage() {
                   {engineState === 'stale' ? ' · market closed?' : ''}
                 </span>
               </div>
-              {/* Alpaca + Supabase — simple green/grey */}
               {[
                 { label: 'Alpaca',    ok: heartbeat?.alpaca_ok ?? null },
                 { label: 'Supabase', ok: heartbeat ? true : null },
@@ -406,7 +415,6 @@ export default function TradingPage() {
 
         {/* ── Scalp Sleeve Panel ── */}
         <div className="glass" style={{ borderRadius: 'var(--r-md)', marginBottom: 24, overflow: 'hidden' }}>
-          {/* Header */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 24px', borderBottom: '1px solid var(--edge)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <div className="eyebrow" style={{ margin: 0 }}>Scalp Sleeve</div>
@@ -414,27 +422,19 @@ export default function TradingPage() {
                 Intraday MR · Fade-only
               </span>
             </div>
-            {/* Circuit-breaker chips from /scalp-status */}
             <div style={{ display: 'flex', gap: 8 }}>
               {scalpStatus?.daily_halt && (
-                <span style={{ fontSize: 10, padding: '3px 10px', borderRadius: 999, background: 'rgba(239,68,68,.12)', color: '#ef4444', border: '1px solid rgba(239,68,68,.3)', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
-                  Daily halt
-                </span>
+                <span style={{ fontSize: 10, padding: '3px 10px', borderRadius: 999, background: 'rgba(239,68,68,.12)', color: '#ef4444', border: '1px solid rgba(239,68,68,.3)', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>Daily halt</span>
               )}
               {scalpStatus?.hwm_halt && (
-                <span style={{ fontSize: 10, padding: '3px 10px', borderRadius: 999, background: 'rgba(245,158,11,.12)', color: '#f59e0b', border: '1px solid rgba(245,158,11,.3)', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
-                  HWM halt
-                </span>
+                <span style={{ fontSize: 10, padding: '3px 10px', borderRadius: 999, background: 'rgba(245,158,11,.12)', color: '#f59e0b', border: '1px solid rgba(245,158,11,.3)', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>HWM halt</span>
               )}
               {scalpStatus && !scalpStatus.daily_halt && !scalpStatus.hwm_halt && (
-                <span style={{ fontSize: 10, padding: '3px 10px', borderRadius: 999, background: 'rgba(34,197,94,.06)', color: '#22c55e', border: '1px solid rgba(34,197,94,.18)', fontFamily: 'var(--font-mono)' }}>
-                  No halts
-                </span>
+                <span style={{ fontSize: 10, padding: '3px 10px', borderRadius: 999, background: 'rgba(34,197,94,.06)', color: '#22c55e', border: '1px solid rgba(34,197,94,.18)', fontFamily: 'var(--font-mono)' }}>No halts</span>
               )}
             </div>
           </div>
 
-          {/* Scalp metrics strip */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', borderBottom: '1px solid var(--edge)' }}>
             {[
               { label: 'Sleeve Equity', value: scalpEquity != null ? `$${fmt(scalpEquity)}` : '—', sub: 'of $25k allocation', color: undefined },
@@ -450,12 +450,10 @@ export default function TradingPage() {
             ))}
           </div>
 
-          {/* Scalp equity chart */}
           <div style={{ padding: '14px 24px 6px', borderBottom: '1px solid var(--edge)' }}>
             <ScalpEquityChart snapshots={scalpSnaps} />
           </div>
 
-          {/* Open positions + trade log */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
             <div style={{ padding: '18px 24px', borderRight: '1px solid var(--edge)' }}>
               <div className="eyebrow" style={{ marginBottom: 12, fontSize: 10 }}>Open Scalp Positions</div>
@@ -474,9 +472,7 @@ export default function TradingPage() {
                     {scalpPositions.map((p: any) => (
                       <tr key={p.id} style={{ borderBottom: '1px solid rgba(160,195,255,.05)' }}>
                         <td style={{ padding: '8px 10px 8px 0', fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--ice)' }}>{p.symbol}</td>
-                        <td style={{ paddingRight: 10, color: p.direction === 'long' ? '#22c55e' : '#ef4444', fontFamily: 'var(--font-mono)' }}>
-                          {p.direction === 'long' ? '↑' : '↓'}
-                        </td>
+                        <td style={{ paddingRight: 10, color: p.direction === 'long' ? '#22c55e' : '#ef4444', fontFamily: 'var(--font-mono)' }}>{p.direction === 'long' ? '↑' : '↓'}</td>
                         <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)' }}>{p.qty}</td>
                         <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)' }}>${fmt(p.entry_price)}</td>
                         <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', color: '#22c55e' }}>${fmt(p.target)}</td>
@@ -511,23 +507,13 @@ export default function TradingPage() {
                             {new Date(t.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
                           </td>
                           <td style={{ paddingRight: 8, fontFamily: 'var(--font-mono)', color: 'var(--ink)' }}>{t.symbol}</td>
-                          <td style={{ paddingRight: 8, color: t.direction === 'long' ? '#22c55e' : '#ef4444', fontFamily: 'var(--font-mono)' }}>
-                            {t.direction === 'long' ? 'L' : 'S'}
-                          </td>
+                          <td style={{ paddingRight: 8, color: t.direction === 'long' ? '#22c55e' : '#ef4444', fontFamily: 'var(--font-mono)' }}>{t.direction === 'long' ? 'L' : 'S'}</td>
                           <td style={{ textAlign: 'right', paddingRight: 8, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)' }}>${fmt(t.entry_price)}</td>
-                          <td style={{ textAlign: 'right', paddingRight: 8, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)' }}>
-                            {t.exit_price ? `$${fmt(t.exit_price)}` : '—'}
-                          </td>
+                          <td style={{ textAlign: 'right', paddingRight: 8, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)' }}>{t.exit_price ? `$${fmt(t.exit_price)}` : '—'}</td>
                           <td style={{ paddingRight: 8 }}>
-                            <span style={{
-                              fontSize: 10, padding: '1px 5px', borderRadius: 3, fontFamily: 'var(--font-mono)',
-                              background: t.exit_reason === 'target' ? 'rgba(34,197,94,.1)' : t.exit_reason === 'stop' ? 'rgba(239,68,68,.1)' : 'rgba(160,195,255,.06)',
-                              color: t.exit_reason === 'target' ? '#22c55e' : t.exit_reason === 'stop' ? '#ef4444' : 'var(--ink-3)',
-                            }}>{t.exit_reason ?? 'open'}</span>
+                            <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 3, fontFamily: 'var(--font-mono)', background: t.exit_reason === 'target' ? 'rgba(34,197,94,.1)' : t.exit_reason === 'stop' ? 'rgba(239,68,68,.1)' : 'rgba(160,195,255,.06)', color: t.exit_reason === 'target' ? '#22c55e' : t.exit_reason === 'stop' ? '#ef4444' : 'var(--ink-3)' }}>{t.exit_reason ?? 'open'}</span>
                           </td>
-                          <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: pnlColor(t.pnl) }}>
-                            {t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}$${fmt(t.pnl)}` : '—'}
-                          </td>
+                          <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: pnlColor(t.pnl) }}>{t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}$${fmt(t.pnl)}` : '—'}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -588,15 +574,11 @@ export default function TradingPage() {
                   <tbody>
                     {trades.map(t => (
                       <tr key={t.id} style={{ borderBottom: '1px solid rgba(160,195,255,.05)' }}>
-                        <td style={{ padding: '8px 10px 8px 0', color: 'var(--ink-3)', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>
-                          {new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                        </td>
+                        <td style={{ padding: '8px 10px 8px 0', color: 'var(--ink-3)', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>{new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</td>
                         <td style={{ paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink)' }}>{t.pair_id}</td>
                         <td style={{ paddingRight: 10, color: t.direction === 'long_spread' ? '#22c55e' : '#ef4444' }}>{t.direction === 'long_spread' ? '↑' : '↓'}</td>
                         <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-3)' }}>{fmt(t.zscore)}</td>
-                        <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: pnlColor(t.pnl) }}>
-                          {t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}$${fmt(t.pnl)}` : '—'}
-                        </td>
+                        <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: pnlColor(t.pnl) }}>{t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}$${fmt(t.pnl)}` : '—'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -613,9 +595,7 @@ export default function TradingPage() {
               <div className="eyebrow">Scanner Activity</div>
               {latestScanAt && <span style={{ fontSize: 11, color: 'var(--ink-3)', fontFamily: 'var(--font-mono)' }}>{timeAgo(latestScanAt)}</span>}
             </div>
-            <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 14 }}>
-              Top candidate pairs by |z-score| — every scan cycle, regardless of regime
-            </div>
+            <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 14 }}>Top candidate pairs by |z-score| — every scan cycle, regardless of regime</div>
             {scanActivity.length === 0 ? (
               <div style={{ color: 'var(--ink-3)', fontSize: 13, padding: '24px 0', textAlign: 'center' }}>No scans logged yet</div>
             ) : (
@@ -642,14 +622,10 @@ export default function TradingPage() {
                               <div style={{ width: 50, height: 5, borderRadius: 3, background: 'rgba(160,195,255,.1)', overflow: 'hidden' }}>
                                 <div style={{ width: `${pct}%`, height: '100%', background: row.would_enter ? '#22c55e' : '#5f7088', borderRadius: 3 }} />
                               </div>
-                              <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: row.would_enter ? '#22c55e' : 'var(--ink-3)', minWidth: 30, textAlign: 'right' }}>
-                                {row.would_enter ? '✓ fires' : `${pct}%`}
-                              </span>
+                              <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: row.would_enter ? '#22c55e' : 'var(--ink-3)', minWidth: 30, textAlign: 'right' }}>{row.would_enter ? '✓ fires' : `${pct}%`}</span>
                             </div>
                           </td>
-                          <td style={{ paddingLeft: 10 }}>
-                            <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: rcfg.color }}>{rcfg.label}</span>
-                          </td>
+                          <td style={{ paddingLeft: 10 }}><span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: rcfg.color }}>{rcfg.label}</span></td>
                         </tr>
                       )
                     })}
@@ -661,13 +637,9 @@ export default function TradingPage() {
 
           <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '22px 24px', overflow: 'hidden' }}>
             <div className="eyebrow" style={{ marginBottom: 4 }}>Shadow Trades</div>
-            <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 14 }}>
-              Hypothetical entries the engine would've made if it weren't standing aside — never executed
-            </div>
+            <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 14 }}>Hypothetical entries the engine would've made if it weren't standing aside — never executed</div>
             {shadowTrades.length === 0 ? (
-              <div style={{ color: 'var(--ink-3)', fontSize: 13, padding: '24px 0', textAlign: 'center' }}>
-                No shadow signals yet — these appear when strong setups occur outside mean-reverting regime
-              </div>
+              <div style={{ color: 'var(--ink-3)', fontSize: 13, padding: '24px 0', textAlign: 'center' }}>No shadow signals yet — these appear when strong setups occur outside mean-reverting regime</div>
             ) : (
               <div style={{ overflowY: 'auto', maxHeight: 320 }}>
                 <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
@@ -683,15 +655,11 @@ export default function TradingPage() {
                       const rcfg = REGIME_CONFIG[row.regime_label] ?? REGIME_CONFIG.initialising
                       return (
                         <tr key={row.id} style={{ borderBottom: '1px solid rgba(160,195,255,.05)' }}>
-                          <td style={{ padding: '8px 10px 8px 0', color: 'var(--ink-3)', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>
-                            {new Date(row.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                          </td>
+                          <td style={{ padding: '8px 10px 8px 0', color: 'var(--ink-3)', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>{new Date(row.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</td>
                           <td style={{ paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink)' }}>{row.sym1}/{row.sym2}</td>
                           <td style={{ paddingRight: 10, color: row.direction === 'long_spread' ? '#22c55e' : '#ef4444' }}>{row.direction === 'long_spread' ? '↑' : '↓'}</td>
                           <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-3)' }}>{fmt(row.zscore)}</td>
-                          <td style={{ textAlign: 'right' }}>
-                            <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: rcfg.color }}>{rcfg.label}</span>
-                          </td>
+                          <td style={{ textAlign: 'right' }}><span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: rcfg.color }}>{rcfg.label}</span></td>
                         </tr>
                       )
                     })}

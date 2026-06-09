@@ -151,7 +151,18 @@ export default function TradingPage() {
   const winRate     = closed.length ? (closed.filter(t => t.pnl > 0).length / closed.length) * 100 : null
   const cfg         = REGIME_CONFIG[regime.label] ?? REGIME_CONFIG.initialising
   const hbAge       = heartbeat ? Math.floor((Date.now() - new Date(heartbeat.created_at).getTime()) / 60000) : null
-  const engineOk    = heartbeat && heartbeat.status === 'ok' && hbAge !== null && hbAge < 60
+
+  // 3-state engine health:
+  //   'ok'     green  — heartbeat within 2h (engine actively running)
+  //   'stale'  yellow — heartbeat 2h–24h old (market closed / weekend / just restarted)
+  //   'down'   red    — heartbeat >24h old or missing
+  const engineState: 'ok' | 'stale' | 'down' =
+    !heartbeat || heartbeat.status !== 'ok' || hbAge === null ? 'down'
+    : hbAge < 120  ? 'ok'
+    : hbAge < 1440 ? 'stale'
+    : 'down'
+
+  const engineDotColor = engineState === 'ok' ? '#22c55e' : engineState === 'stale' ? '#f59e0b' : '#ef4444'
 
   const spyStart = snapshots.find(s => s.spy_close != null)?.spy_close ?? null
 
@@ -282,15 +293,23 @@ export default function TradingPage() {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
             <div className="eyebrow">System Health</div>
             <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+              {/* Engine — 3-state */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: engineDotColor, display: 'inline-block' }} />
+                <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)' }}>Engine</span>
+                <span style={{ fontSize: 11, color: engineState === 'stale' ? '#f59e0b' : 'var(--ink-3)' }}>
+                  {heartbeat ? timeAgo(heartbeat.created_at) : 'no heartbeat yet'}
+                  {engineState === 'stale' ? ' · market closed?' : ''}
+                </span>
+              </div>
+              {/* Alpaca + Supabase — simple green/grey */}
               {[
-                { label: 'Engine', ok: engineOk, sub: heartbeat ? timeAgo(heartbeat.created_at) : 'no heartbeat yet' },
-                { label: 'Alpaca', ok: heartbeat?.alpaca_ok ?? null, sub: null },
-                { label: 'Supabase', ok: heartbeat ? true : null, sub: null },
-              ].map(({ label, ok, sub }) => (
+                { label: 'Alpaca',    ok: heartbeat?.alpaca_ok ?? null },
+                { label: 'Supabase', ok: heartbeat ? true : null },
+              ].map(({ label, ok }) => (
                 <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                   <span style={{ width: 7, height: 7, borderRadius: '50%', background: ok === null ? '#5f7088' : ok ? '#22c55e' : '#ef4444', display: 'inline-block' }} />
                   <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)' }}>{label}</span>
-                  {sub && <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>{sub}</span>}
                 </div>
               ))}
               <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>

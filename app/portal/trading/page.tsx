@@ -21,7 +21,6 @@ const pnlColor = (n: number | null | undefined) =>
   n == null ? 'var(--ink-3)' : n >= 0 ? '#22c55e' : '#ef4444'
 
 // Format Y-axis ticks as $XXXk with 1 decimal only when needed to avoid duplicates
-// e.g. $100k, $100.5k, $101k, $101.5k — never two identical labels
 const fmtK = (v: number) => {
   const k1 = (v / 1000).toFixed(1)
   return `$${k1.endsWith('.0') ? (v / 1000).toFixed(0) : k1}k`
@@ -80,7 +79,8 @@ function ScalpEquityChart({ snapshots }: { snapshots: any[] }) {
 export default function TradingPage() {
   const router = useRouter()
   const [snapshots,      setSnapshots]      = useState<any[]>([])
-  const [positions,      setPositions]      = useState<any[]>([])
+  // NOTE: `positions` table is never written by the engine (upsert_position is not called).
+  // Open stat arb trades are derived from `trades` where closed_at IS NULL (see openStatArbTrades below).
   const [trades,         setTrades]         = useState<any[]>([])
   const [regime,         setRegime]         = useState({ label: 'initialising', confidence: null as number | null })
   const [heartbeat,      setHeartbeat]      = useState<any>(null)
@@ -94,7 +94,7 @@ export default function TradingPage() {
   const [scalpPositions, setScalpPositions] = useState<any[]>([])
   const [scalpTrades,    setScalpTrades]    = useState<any[]>([])
 
-  // Toggle state — persisted in localStorage so position survives refresh/navigation
+  // Toggle state — persisted in localStorage
   const [statarbOpen, setStatarbOpen] = useState<boolean>(() => getLS('gl-statarb-open', true))
   const [scalpOpen,   setScalpOpen]   = useState<boolean>(() => getLS('gl-scalp-open',   true))
 
@@ -102,10 +102,10 @@ export default function TradingPage() {
   useEffect(() => { localStorage.setItem('gl-scalp-open',   String(scalpOpen))   }, [scalpOpen])
 
   const refresh = useCallback(async () => {
-    const [s, p, t, rh, hb, sa, sh, ssn, spo, stc] = await Promise.all([
+    const [s, t, rh, hb, sa, sh, ssn, spo, stc] = await Promise.all([
       trading.from('portfolio_snapshots').select('*').order('created_at', { ascending: true }).limit(60),
-      trading.from('positions').select('*').eq('status', 'open').order('created_at', { ascending: false }),
-      trading.from('trades').select('*').order('created_at', { ascending: false }).limit(30),
+      // trades table is the source of truth for stat arb entries (positions table is never populated)
+      trading.from('trades').select('*').order('created_at', { ascending: false }).limit(60),
       trading.from('regime_history').select('*').order('created_at', { ascending: false }).limit(60),
       trading.from('heartbeats').select('*').order('created_at', { ascending: false }).limit(1),
       trading.from('scan_activity').select('*').order('created_at', { ascending: false }).limit(10),
@@ -115,7 +115,6 @@ export default function TradingPage() {
       trading.from('scalp_trades').select('*').eq('status', 'closed').order('closed_at', { ascending: false }).limit(20),
     ])
     if (s.data)  setSnapshots(s.data)
-    if (p.data)  setPositions(p.data)
     if (t.data)  setTrades(t.data)
     if (rh.data?.length) {
       setRegime({ label: rh.data[0].regime_label, confidence: rh.data[0].confidence })
@@ -133,10 +132,8 @@ export default function TradingPage() {
 
   useEffect(() => {
     refresh()
-    // Supabase Realtime — instant updates on any table change
     const ch = trading.channel('trading-dash')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'portfolio_snapshots' }, refresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'positions' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'trades' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'regime_history' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'heartbeats' }, refresh)
@@ -145,7 +142,6 @@ export default function TradingPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'scalp_trades' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'scalp_equity_snapshots' }, refresh)
       .subscribe()
-    // 30s polling fallback — catches any missed realtime events
     const poll = setInterval(refresh, 30000)
     return () => { trading.removeChannel(ch); clearInterval(poll) }
   }, [refresh])
@@ -159,8 +155,15 @@ export default function TradingPage() {
   const todayPnlPct = heartbeat?.today_pnl_pct ?? null
   const hbUpdatedAt = heartbeat?.created_at ? new Date(heartbeat.created_at) : null
 
-  const closed  = trades.filter(t => t.status === 'closed' && t.pnl != null)
-  const winRate = closed.length ? (closed.filter(t => t.pnl > 0).length / closed.length) * 100 : null
+  // Open stat arb trades: engine writes to `trades` (not `positions`).
+  // An open trade has no closed_at and no pnl yet.
+  const openStatArbTrades = trades.filter((t: any) => !t.closed_at && t.pnl == null)
+  const closedStatArbTrades = trades.filter((t: any) => t.status === 'closed' && t.pnl != null)
+
+  const winRate = closedStatArbTrades.length
+    ? (closedStatArbTrades.filter((t: any) => t.pnl > 0).length / closedStatArbTrades.length) * 100
+    : null
+
   const cfg     = REGIME_CONFIG[regime.label] ?? REGIME_CONFIG.initialising
   const hbAge   = heartbeat ? Math.floor((Date.now() - new Date(heartbeat.created_at).getTime()) / 60000) : null
 
@@ -214,6 +217,11 @@ export default function TradingPage() {
   const scalpRetPct   = scalpEquity && scalpTotalPnl != null ? (scalpTotalPnl / (scalpEquity - scalpTotalPnl)) * 100 : null
   const closedScalp   = scalpTrades.filter((t: any) => t.pnl != null)
   const scalpWR       = closedScalp.length ? (closedScalp.filter((t: any) => t.pnl > 0).length / closedScalp.length) * 100 : null
+
+  // Scalp positions with null target/stop are orphaned records from engine restarts
+  // (in-memory state lost on restart, DB records not closed). Flag them visually.
+  const orphanedScalpPositions = scalpPositions.filter((p: any) => p.target == null || p.stop == null)
+  const validScalpPositions    = scalpPositions.filter((p: any) => p.target != null && p.stop != null)
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (!active || !payload?.length) return null
@@ -404,7 +412,7 @@ export default function TradingPage() {
               </span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              {!statarbOpen && <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--ink-3)' }}>{winRate != null ? `WR ${fmt(winRate, 1)}%` : 'WR —'} · {positions.length} open</span>}
+              {!statarbOpen && <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--ink-3)' }}>{winRate != null ? `WR ${fmt(winRate, 1)}%` : 'WR —'} · {openStatArbTrades.length} open</span>}
               <span style={{ color: 'var(--ink-3)', fontSize: 13, fontFamily: 'var(--font-mono)' }}>{statarbOpen ? '▲' : '▼'}</span>
             </div>
           </div>
@@ -413,8 +421,8 @@ export default function TradingPage() {
             <div style={{ padding: '20px 24px' }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14, marginBottom: 20 }}>
                 {[
-                  { label: 'Win Rate', value: winRate != null ? `${fmt(winRate, 1)}%` : '—', sub: `${closed.length} closed trades`, color: winRate != null ? (winRate >= 50 ? '#22c55e' : '#ef4444') : undefined },
-                  { label: 'Open Positions', value: String(positions.length), sub: positions.length ? positions.map(p => p.pair_id).join(', ') : 'none active' },
+                  { label: 'Win Rate', value: winRate != null ? `${fmt(winRate, 1)}%` : '—', sub: `${closedStatArbTrades.length} closed trades`, color: winRate != null ? (winRate >= 50 ? '#22c55e' : '#ef4444') : undefined },
+                  { label: 'Open Positions', value: String(openStatArbTrades.length), sub: openStatArbTrades.length ? openStatArbTrades.map((t: any) => t.pair_id).join(', ') : 'none active' },
                 ].map((m: any) => (
                   <div key={m.label} className="glass" style={{ borderRadius: 'var(--r-md)', padding: '14px 18px' }}>
                     <div style={{ fontSize: 10, letterSpacing: '.14em', color: 'var(--ink-3)', textTransform: 'uppercase', fontFamily: 'var(--font-mono)', marginBottom: 5 }}>{m.label}</div>
@@ -465,39 +473,44 @@ export default function TradingPage() {
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+                {/* Open Positions — reads from `trades` where not yet closed */}
                 <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '18px 20px' }}>
                   <div className="eyebrow" style={{ marginBottom: 14, fontSize: 10 }}>Open Positions</div>
-                  {positions.length === 0 ? <div style={{ color: 'var(--ink-3)', fontSize: 13, padding: '20px 0', textAlign: 'center' }}>No open positions</div> : (
+                  {openStatArbTrades.length === 0 ? (
+                    <div style={{ color: 'var(--ink-3)', fontSize: 13, padding: '20px 0', textAlign: 'center' }}>No open positions</div>
+                  ) : (
                     <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
                       <thead><tr style={{ color: 'var(--ink-3)', fontSize: 10, letterSpacing: '.12em', textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>
-                        {['Pair', 'Direction', 'Entry Z', 'Curr Z'].map(h => <th key={h} style={{ textAlign: h === 'Pair' || h === 'Direction' ? 'left' : 'right', paddingBottom: 10, paddingRight: 12, borderBottom: '1px solid var(--edge)' }}>{h}</th>)}
+                        {['Pair', 'Direction', 'Entry Z', 'Opened'].map(h => <th key={h} style={{ textAlign: h === 'Pair' || h === 'Direction' ? 'left' : 'right', paddingBottom: 10, paddingRight: 12, borderBottom: '1px solid var(--edge)' }}>{h}</th>)}
                       </tr></thead>
-                      <tbody>{positions.map(p => (
-                        <tr key={p.id} style={{ borderBottom: '1px solid rgba(160,195,255,.06)' }}>
-                          <td style={{ padding: '9px 12px 9px 0', fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--ice)' }}>{p.pair_id}</td>
-                          <td style={{ padding: '9px 12px 9px 0' }}><span style={{ padding: '3px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600, background: p.direction === 'long_spread' ? 'rgba(34,197,94,.12)' : 'rgba(239,68,68,.12)', color: p.direction === 'long_spread' ? '#22c55e' : '#ef4444' }}>{p.direction === 'long_spread' ? '↑ Long' : '↓ Short'}</span></td>
-                          <td style={{ textAlign: 'right', paddingRight: 12, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)' }}>{fmt(p.entry_zscore)}</td>
-                          <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: Math.abs(p.current_zscore) > 2.5 ? '#ef4444' : 'var(--ink-3)' }}>{fmt(p.current_zscore)}</td>
+                      <tbody>{openStatArbTrades.map((t: any) => (
+                        <tr key={t.id} style={{ borderBottom: '1px solid rgba(160,195,255,.06)' }}>
+                          <td style={{ padding: '9px 12px 9px 0', fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--ice)' }}>{t.pair_id}</td>
+                          <td style={{ padding: '9px 12px 9px 0' }}><span style={{ padding: '3px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600, background: t.direction === 'long_spread' ? 'rgba(34,197,94,.12)' : 'rgba(239,68,68,.12)', color: t.direction === 'long_spread' ? '#22c55e' : '#ef4444' }}>{t.direction === 'long_spread' ? '↑ Long' : '↓ Short'}</span></td>
+                          <td style={{ textAlign: 'right', paddingRight: 12, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)' }}>{fmt(t.zscore)}</td>
+                          <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--ink-3)', fontSize: 11 }}>{new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</td>
                         </tr>
                       ))}</tbody>
                     </table>
                   )}
                 </div>
                 <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '18px 20px', overflow: 'hidden' }}>
-                  <div className="eyebrow" style={{ marginBottom: 14, fontSize: 10 }}>Trade Log <span style={{ color: 'var(--ink-3)', textTransform: 'none', fontSize: 11, letterSpacing: 0 }}>last 30</span></div>
+                  <div className="eyebrow" style={{ marginBottom: 14, fontSize: 10 }}>Trade Log <span style={{ color: 'var(--ink-3)', textTransform: 'none', fontSize: 11, letterSpacing: 0 }}>last 60</span></div>
                   {trades.length === 0 ? <div style={{ color: 'var(--ink-3)', fontSize: 13, padding: '20px 0', textAlign: 'center' }}>No trades yet</div> : (
                     <div style={{ overflowY: 'auto', maxHeight: 300 }}>
                       <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
                         <thead><tr style={{ color: 'var(--ink-3)', fontSize: 10, letterSpacing: '.12em', textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>
                           {['Time', 'Pair', 'Dir', 'Z', 'P&L'].map(h => <th key={h} style={{ textAlign: ['Pair', 'Dir', 'Time'].includes(h) ? 'left' : 'right', paddingBottom: 10, paddingRight: 10, borderBottom: '1px solid var(--edge)' }}>{h}</th>)}
                         </tr></thead>
-                        <tbody>{trades.map(t => (
+                        <tbody>{trades.map((t: any) => (
                           <tr key={t.id} style={{ borderBottom: '1px solid rgba(160,195,255,.05)' }}>
                             <td style={{ padding: '7px 10px 7px 0', color: 'var(--ink-3)', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>{new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</td>
                             <td style={{ paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink)' }}>{t.pair_id}</td>
                             <td style={{ paddingRight: 10, color: t.direction === 'long_spread' ? '#22c55e' : '#ef4444' }}>{t.direction === 'long_spread' ? '↑' : '↓'}</td>
                             <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-3)' }}>{fmt(t.zscore)}</td>
-                            <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: pnlColor(t.pnl) }}>{t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}$${fmt(t.pnl)}` : '—'}</td>
+                            <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: t.pnl != null ? pnlColor(t.pnl) : 'var(--ink-3)' }}>
+                              {t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}$${fmt(t.pnl)}` : <span style={{ fontSize: 10, color: 'var(--ink-3)' }}>open</span>}
+                            </td>
                           </tr>
                         ))}</tbody>
                       </table>
@@ -582,7 +595,7 @@ export default function TradingPage() {
               <span style={{ fontSize: 10, padding: '3px 8px', borderRadius: 999, background: 'rgba(34,197,94,.08)', color: '#22c55e', border: '1px solid rgba(34,197,94,.2)', fontFamily: 'var(--font-mono)' }}>Intraday MR · Fade-only</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              {!scalpOpen && <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--ink-3)' }}>{scalpEquity != null ? `$${fmt(scalpEquity)}` : '—'} · {scalpPositions.length} open</span>}
+              {!scalpOpen && <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--ink-3)' }}>{scalpEquity != null ? `$${fmt(scalpEquity)}` : '—'} · {validScalpPositions.length} open{orphanedScalpPositions.length > 0 ? ` · ${orphanedScalpPositions.length} orphaned` : ''}</span>}
               <span style={{ color: 'var(--ink-3)', fontSize: 13, fontFamily: 'var(--font-mono)' }}>{scalpOpen ? '▲' : '▼'}</span>
             </div>
           </div>
@@ -594,7 +607,7 @@ export default function TradingPage() {
                   { label: 'Sleeve Equity', value: scalpEquity != null ? `$${fmt(scalpEquity)}` : '—', sub: 'of $25k allocation' },
                   { label: 'Scalp Net P&L', value: scalpTotalPnl != null ? `${scalpTotalPnl >= 0 ? '+' : ''}$${fmt(scalpTotalPnl)}` : '—', sub: scalpRetPct != null ? `${scalpRetPct >= 0 ? '+' : ''}${fmt(scalpRetPct)}%` : undefined, color: pnlColor(scalpTotalPnl) },
                   { label: 'Scalp Win Rate', value: scalpWR != null ? `${fmt(scalpWR, 1)}%` : '—', sub: closedScalp.length ? `${closedScalp.length} closed` : 'no closed trades', color: scalpWR != null ? (scalpWR >= 55 ? '#22c55e' : scalpWR >= 45 ? '#f59e0b' : '#ef4444') : undefined },
-                  { label: 'Open Scalp Pos', value: String(scalpPositions.length), sub: 'max 4 concurrent' },
+                  { label: 'Open Scalp Pos', value: String(validScalpPositions.length), sub: orphanedScalpPositions.length > 0 ? `+ ${orphanedScalpPositions.length} orphaned (engine restart)` : 'max 4 concurrent' },
                 ].map((m: any, i, arr) => (
                   <div key={m.label} style={{ padding: '14px 24px', borderRight: i < arr.length - 1 ? '1px solid var(--edge)' : 'none' }}>
                     <div style={{ fontSize: 10, letterSpacing: '.14em', color: 'var(--ink-3)', textTransform: 'uppercase', fontFamily: 'var(--font-mono)', marginBottom: 5 }}>{m.label}</div>
@@ -609,7 +622,19 @@ export default function TradingPage() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
                 <div style={{ padding: '18px 24px', borderRight: '1px solid var(--edge)' }}>
                   <div className="eyebrow" style={{ marginBottom: 12, fontSize: 10 }}>Open Scalp Positions</div>
-                  {scalpPositions.length === 0 ? <div style={{ color: 'var(--ink-3)', fontSize: 13, padding: '20px 0', textAlign: 'center' }}>No open scalp positions</div> : (
+
+                  {/* Orphaned positions warning */}
+                  {orphanedScalpPositions.length > 0 && (
+                    <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 6, background: 'rgba(245,158,11,.08)', border: '1px solid rgba(245,158,11,.2)', fontSize: 11, color: '#f59e0b', fontFamily: 'var(--font-mono)' }}>
+                      ⚠ {orphanedScalpPositions.length} orphaned record{orphanedScalpPositions.length > 1 ? 's' : ''} — engine restarted without closing these positions. No live Alpaca exposure.
+                    </div>
+                  )}
+
+                  {validScalpPositions.length === 0 && orphanedScalpPositions.length === 0 ? (
+                    <div style={{ color: 'var(--ink-3)', fontSize: 13, padding: '20px 0', textAlign: 'center' }}>No open scalp positions</div>
+                  ) : validScalpPositions.length === 0 ? (
+                    <div style={{ color: 'var(--ink-3)', fontSize: 13, padding: '10px 0', textAlign: 'center' }}>No active positions</div>
+                  ) : (
                     <>
                       <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
                         <thead><tr style={{ color: 'var(--ink-3)', fontSize: 10, letterSpacing: '.12em', textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>
@@ -618,7 +643,7 @@ export default function TradingPage() {
                       </table>
                       <div style={{ overflowY: 'auto', maxHeight: 280 }}>
                         <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
-                          <tbody>{scalpPositions.map((p: any) => (
+                          <tbody>{validScalpPositions.map((p: any) => (
                             <tr key={p.id} style={{ borderBottom: '1px solid rgba(160,195,255,.05)' }}>
                               <td style={{ padding: '8px 10px 8px 0', fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--ice)', width: '20%' }}>{p.symbol}</td>
                               <td style={{ paddingRight: 10, color: p.direction === 'long' ? '#22c55e' : '#ef4444', fontFamily: 'var(--font-mono)', width: '10%' }}>{p.direction === 'long' ? '↑' : '↓'}</td>
@@ -630,7 +655,6 @@ export default function TradingPage() {
                           ))}</tbody>
                         </table>
                       </div>
-                      {scalpPositions.length > 10 && <div style={{ marginTop: 6, fontSize: 10, color: 'var(--ink-3)', fontFamily: 'var(--font-mono)', textAlign: 'right' }}>{scalpPositions.length - 10} more · scroll to view</div>}
                     </>
                   )}
                 </div>

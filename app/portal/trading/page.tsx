@@ -79,8 +79,6 @@ function ScalpEquityChart({ snapshots }: { snapshots: any[] }) {
 export default function TradingPage() {
   const router = useRouter()
   const [snapshots,      setSnapshots]      = useState<any[]>([])
-  // NOTE: `positions` table is never written by the engine (upsert_position is not called).
-  // Open stat arb trades are derived from `trades` where closed_at IS NULL (see openStatArbTrades below).
   const [trades,         setTrades]         = useState<any[]>([])
   const [regime,         setRegime]         = useState({ label: 'initialising', confidence: null as number | null })
   const [heartbeat,      setHeartbeat]      = useState<any>(null)
@@ -94,7 +92,6 @@ export default function TradingPage() {
   const [scalpPositions, setScalpPositions] = useState<any[]>([])
   const [scalpTrades,    setScalpTrades]    = useState<any[]>([])
 
-  // Toggle state — persisted in localStorage
   const [statarbOpen, setStatarbOpen] = useState<boolean>(() => getLS('gl-statarb-open', true))
   const [scalpOpen,   setScalpOpen]   = useState<boolean>(() => getLS('gl-scalp-open',   true))
 
@@ -104,7 +101,6 @@ export default function TradingPage() {
   const refresh = useCallback(async () => {
     const [s, t, rh, hb, sa, sh, ssn, spo, stc] = await Promise.all([
       trading.from('portfolio_snapshots').select('*').order('created_at', { ascending: true }).limit(60),
-      // trades table is the source of truth for stat arb entries (positions table is never populated)
       trading.from('trades').select('*').order('created_at', { ascending: false }).limit(60),
       trading.from('regime_history').select('*').order('created_at', { ascending: false }).limit(60),
       trading.from('heartbeats').select('*').order('created_at', { ascending: false }).limit(1),
@@ -146,7 +142,6 @@ export default function TradingPage() {
     return () => { trading.removeChannel(ch); clearInterval(poll) }
   }, [refresh])
 
-  // ── Derived values ──────────────────────────────────────────────────────────
   const latest      = snapshots.at(-1)
   const portValue   = heartbeat?.equity ?? latest?.portfolio_value ?? null
   const totalPnl    = portValue != null ? Math.round((portValue - PAPER_START) * 100) / 100 : null
@@ -155,17 +150,15 @@ export default function TradingPage() {
   const todayPnlPct = heartbeat?.today_pnl_pct ?? null
   const hbUpdatedAt = heartbeat?.created_at ? new Date(heartbeat.created_at) : null
 
-  // Open stat arb trades: engine writes to `trades` (not `positions`).
-  // An open trade has no closed_at and no pnl yet.
-  const openStatArbTrades = trades.filter((t: any) => !t.closed_at && t.pnl == null)
+  const openStatArbTrades   = trades.filter((t: any) => !t.closed_at && t.pnl == null)
   const closedStatArbTrades = trades.filter((t: any) => t.status === 'closed' && t.pnl != null)
 
   const winRate = closedStatArbTrades.length
     ? (closedStatArbTrades.filter((t: any) => t.pnl > 0).length / closedStatArbTrades.length) * 100
     : null
 
-  const cfg     = REGIME_CONFIG[regime.label] ?? REGIME_CONFIG.initialising
-  const hbAge   = heartbeat ? Math.floor((Date.now() - new Date(heartbeat.created_at).getTime()) / 60000) : null
+  const cfg   = REGIME_CONFIG[regime.label] ?? REGIME_CONFIG.initialising
+  const hbAge = heartbeat ? Math.floor((Date.now() - new Date(heartbeat.created_at).getTime()) / 60000) : null
 
   const engineState: 'ok' | 'stale' | 'down' =
     !heartbeat || heartbeat.status !== 'ok' || hbAge === null ? 'down'
@@ -218,8 +211,6 @@ export default function TradingPage() {
   const closedScalp   = scalpTrades.filter((t: any) => t.pnl != null)
   const scalpWR       = closedScalp.length ? (closedScalp.filter((t: any) => t.pnl > 0).length / closedScalp.length) * 100 : null
 
-  // Scalp positions with null target/stop are orphaned records from engine restarts.
-  // They are shown in the table with a ⚠ badge — engine startup recovery will close them.
   const orphanedScalpPositions = scalpPositions.filter((p: any) => p.target == null || p.stop == null)
 
   const CustomTooltip = ({ active, payload, label }: any) => {
@@ -329,34 +320,10 @@ export default function TradingPage() {
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', borderBottom: '1px solid var(--edge)' }}>
             {[
-              {
-                label: 'Portfolio Value',
-                value: portValue != null ? `$${fmt(portValue)}` : '—',
-                sub: 'Alpaca paper account',
-                color: undefined,
-                live: !!heartbeat?.equity,
-              },
-              {
-                label: 'Total P&L',
-                value: totalPnl != null ? `${totalPnl >= 0 ? '+' : ''}$${fmt(totalPnl)}` : '—',
-                sub: totalPnlPct != null ? `${totalPnlPct >= 0 ? '+' : ''}${fmt(totalPnlPct)}% since start` : 'vs $100k start',
-                color: pnlColor(totalPnl),
-                live: !!heartbeat?.equity,
-              },
-              {
-                label: 'Today P&L',
-                value: todayPnl != null ? `${todayPnl >= 0 ? '+' : ''}$${fmt(todayPnl)}` : '—',
-                sub: 'equity − yesterday close',
-                color: pnlColor(todayPnl),
-                live: todayPnl != null,
-              },
-              {
-                label: 'Today P&L %',
-                value: todayPnlPct != null ? `${todayPnlPct >= 0 ? '+' : ''}${fmt(todayPnlPct, 3)}%` : '—',
-                sub: 'vs yesterday close',
-                color: pnlColor(todayPnlPct),
-                live: todayPnlPct != null,
-              },
+              { label: 'Portfolio Value', value: portValue != null ? `$${fmt(portValue)}` : '—', sub: 'Alpaca paper account', color: undefined, live: !!heartbeat?.equity },
+              { label: 'Total P&L', value: totalPnl != null ? `${totalPnl >= 0 ? '+' : ''}$${fmt(totalPnl)}` : '—', sub: totalPnlPct != null ? `${totalPnlPct >= 0 ? '+' : ''}${fmt(totalPnlPct)}% since start` : 'vs $100k start', color: pnlColor(totalPnl), live: !!heartbeat?.equity },
+              { label: 'Today P&L', value: todayPnl != null ? `${todayPnl >= 0 ? '+' : ''}$${fmt(todayPnl)}` : '—', sub: 'equity − yesterday close', color: pnlColor(todayPnl), live: todayPnl != null },
+              { label: 'Today P&L %', value: todayPnlPct != null ? `${todayPnlPct >= 0 ? '+' : ''}${fmt(todayPnlPct, 3)}%` : '—', sub: 'vs yesterday close', color: pnlColor(todayPnlPct), live: todayPnlPct != null },
             ].map((m: any, i, arr) => (
               <div key={m.label} style={{ padding: '16px 24px', borderRight: i < arr.length - 1 ? '1px solid var(--edge)' : 'none' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
@@ -369,7 +336,6 @@ export default function TradingPage() {
             ))}
           </div>
 
-          {/* Equity Curve */}
           <div style={{ padding: '20px 24px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
               <div className="eyebrow" style={{ margin: 0, fontSize: 10 }}>Equity Curve vs S&P 500</div>
@@ -431,7 +397,6 @@ export default function TradingPage() {
                 ))}
               </div>
 
-              {/* Regime Timeline */}
               <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '18px 20px', marginBottom: 20 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
                   <div className="eyebrow" style={{ margin: 0, fontSize: 10 }}>Regime Timeline</div>
@@ -472,7 +437,6 @@ export default function TradingPage() {
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-                {/* Open Positions — reads from `trades` where not yet closed */}
                 <div className="glass" style={{ borderRadius: 'var(--r-md)', padding: '18px 20px' }}>
                   <div className="eyebrow" style={{ marginBottom: 14, fontSize: 10 }}>Open Positions</div>
                   {openStatArbTrades.length === 0 ? (
@@ -621,13 +585,6 @@ export default function TradingPage() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
                 <div style={{ padding: '18px 24px', borderRight: '1px solid var(--edge)' }}>
                   <div className="eyebrow" style={{ marginBottom: 12, fontSize: 10 }}>Open Scalp Positions</div>
-
-                  {/* Orphaned warning banner */}
-                  {orphanedScalpPositions.length > 0 && (
-                    <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 6, background: 'rgba(245,158,11,.08)', border: '1px solid rgba(245,158,11,.2)', fontSize: 11, color: '#f59e0b', fontFamily: 'var(--font-mono)' }}>
-                      ⚠ {orphanedScalpPositions.length} orphaned — engine restarted without closing. No live Alpaca exposure.
-                    </div>
-                  )}
 
                   {scalpPositions.length === 0 ? (
                     <div style={{ color: 'var(--ink-3)', fontSize: 13, padding: '20px 0', textAlign: 'center' }}>No open scalp positions</div>

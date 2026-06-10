@@ -20,6 +20,13 @@ const fmt = (n: number | null | undefined, d = 2) =>
 const pnlColor = (n: number | null | undefined) =>
   n == null ? 'var(--ink-3)' : n >= 0 ? '#22c55e' : '#ef4444'
 
+// Format Y-axis ticks as $XXXk with 1 decimal only when needed to avoid duplicates
+// e.g. $100k, $100.5k, $101k, $101.5k — never two identical labels
+const fmtK = (v: number) => {
+  const k1 = (v / 1000).toFixed(1)
+  return `$${k1.endsWith('.0') ? (v / 1000).toFixed(0) : k1}k`
+}
+
 const REGIME_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
   mean_reverting:  { label: 'Mean Reverting',  color: '#22c55e', bg: 'rgba(34,197,94,.1)'  },
   trending:        { label: 'Trending',        color: '#f59e0b', bg: 'rgba(245,158,11,.1)' },
@@ -61,7 +68,7 @@ function ScalpEquityChart({ snapshots }: { snapshots: any[] }) {
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(160,195,255,.06)" />
         <XAxis dataKey="i" hide />
         <YAxis tick={{ fill: 'var(--ink-3)', fontSize: 10 }} axisLine={false} tickLine={false}
-          tickFormatter={(v: number) => `$${(v / 1000).toFixed(1)}k`} domain={['auto', 'auto']} width={44} />
+          tickFormatter={fmtK} domain={['auto', 'auto']} width={52} />
         <ReferenceLine y={base} stroke="rgba(160,195,255,.15)" strokeDasharray="4 2" />
         <Tooltip formatter={(v: any) => [`$${fmt(v)}`, 'Sleeve equity']} labelFormatter={() => ''} />
         <Area type="monotone" dataKey="equity" stroke="#22c55e" strokeWidth={1.8} fill="url(#scalpGrad)" dot={false} />
@@ -370,7 +377,8 @@ export default function TradingPage() {
                 <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(160,195,255,.08)" />
                   <XAxis dataKey="date" tick={{ fill: 'var(--ink-3)', fontSize: 11, fontFamily: 'var(--font-mono)' }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: 'var(--ink-3)', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={v => `$${(v / 1000).toFixed(0)}k`} domain={[PAPER_START, 'auto']} />
+                  <YAxis tick={{ fill: 'var(--ink-3)', fontSize: 11 }} axisLine={false} tickLine={false}
+                    tickFormatter={fmtK} domain={[PAPER_START, 'auto']} width={56} />
                   <ReferenceLine y={PAPER_START} stroke="rgba(160,195,255,.12)" strokeDasharray="4 2" />
                   <Tooltip content={<CustomTooltip />} />
                   <Line type="monotone" dataKey="bot" stroke="#cfe3ff" strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#cfe3ff' }} />
@@ -547,7 +555,7 @@ export default function TradingPage() {
                         <tbody>{shadowTrades.map(row => {
                           const rcfg = REGIME_CONFIG[row.regime_label] ?? REGIME_CONFIG.initialising
                           return (
-                            <tr key={row.id} style={{ borderBottom: '1px solid rgba(160,195,255,.05)' }}> 
+                            <tr key={row.id} style={{ borderBottom: '1px solid rgba(160,195,255,.05)' }}>
                               <td style={{ padding: '7px 10px 7px 0', color: 'var(--ink-3)', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>{new Date(row.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</td>
                               <td style={{ paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink)' }}>{row.sym1}/{row.sym2}</td>
                               <td style={{ paddingRight: 10, color: row.direction === 'long_spread' ? '#22c55e' : '#ef4444' }}>{row.direction === 'long_spread' ? '↑' : '↓'}</td>

@@ -218,10 +218,9 @@ export default function TradingPage() {
   const closedScalp   = scalpTrades.filter((t: any) => t.pnl != null)
   const scalpWR       = closedScalp.length ? (closedScalp.filter((t: any) => t.pnl > 0).length / closedScalp.length) * 100 : null
 
-  // Scalp positions with null target/stop are orphaned records from engine restarts
-  // (in-memory state lost on restart, DB records not closed). Flag them visually.
+  // Scalp positions with null target/stop are orphaned records from engine restarts.
+  // They are shown in the table with a ⚠ badge — engine startup recovery will close them.
   const orphanedScalpPositions = scalpPositions.filter((p: any) => p.target == null || p.stop == null)
-  const validScalpPositions    = scalpPositions.filter((p: any) => p.target != null && p.stop != null)
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (!active || !payload?.length) return null
@@ -595,7 +594,7 @@ export default function TradingPage() {
               <span style={{ fontSize: 10, padding: '3px 8px', borderRadius: 999, background: 'rgba(34,197,94,.08)', color: '#22c55e', border: '1px solid rgba(34,197,94,.2)', fontFamily: 'var(--font-mono)' }}>Intraday MR · Fade-only</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              {!scalpOpen && <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--ink-3)' }}>{scalpEquity != null ? `$${fmt(scalpEquity)}` : '—'} · {validScalpPositions.length} open{orphanedScalpPositions.length > 0 ? ` · ${orphanedScalpPositions.length} orphaned` : ''}</span>}
+              {!scalpOpen && <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--ink-3)' }}>{scalpEquity != null ? `$${fmt(scalpEquity)}` : '—'} · {scalpPositions.length} open{orphanedScalpPositions.length > 0 ? ` (${orphanedScalpPositions.length} orphaned)` : ''}</span>}
               <span style={{ color: 'var(--ink-3)', fontSize: 13, fontFamily: 'var(--font-mono)' }}>{scalpOpen ? '▲' : '▼'}</span>
             </div>
           </div>
@@ -607,7 +606,7 @@ export default function TradingPage() {
                   { label: 'Sleeve Equity', value: scalpEquity != null ? `$${fmt(scalpEquity)}` : '—', sub: 'of $25k allocation' },
                   { label: 'Scalp Net P&L', value: scalpTotalPnl != null ? `${scalpTotalPnl >= 0 ? '+' : ''}$${fmt(scalpTotalPnl)}` : '—', sub: scalpRetPct != null ? `${scalpRetPct >= 0 ? '+' : ''}${fmt(scalpRetPct)}%` : undefined, color: pnlColor(scalpTotalPnl) },
                   { label: 'Scalp Win Rate', value: scalpWR != null ? `${fmt(scalpWR, 1)}%` : '—', sub: closedScalp.length ? `${closedScalp.length} closed` : 'no closed trades', color: scalpWR != null ? (scalpWR >= 55 ? '#22c55e' : scalpWR >= 45 ? '#f59e0b' : '#ef4444') : undefined },
-                  { label: 'Open Scalp Pos', value: String(validScalpPositions.length), sub: orphanedScalpPositions.length > 0 ? `+ ${orphanedScalpPositions.length} orphaned (engine restart)` : 'max 4 concurrent' },
+                  { label: 'Open Scalp Pos', value: String(scalpPositions.length), sub: orphanedScalpPositions.length > 0 ? `${orphanedScalpPositions.length} orphaned · no Alpaca exposure` : 'max 4 concurrent' },
                 ].map((m: any, i, arr) => (
                   <div key={m.label} style={{ padding: '14px 24px', borderRight: i < arr.length - 1 ? '1px solid var(--edge)' : 'none' }}>
                     <div style={{ fontSize: 10, letterSpacing: '.14em', color: 'var(--ink-3)', textTransform: 'uppercase', fontFamily: 'var(--font-mono)', marginBottom: 5 }}>{m.label}</div>
@@ -623,17 +622,15 @@ export default function TradingPage() {
                 <div style={{ padding: '18px 24px', borderRight: '1px solid var(--edge)' }}>
                   <div className="eyebrow" style={{ marginBottom: 12, fontSize: 10 }}>Open Scalp Positions</div>
 
-                  {/* Orphaned positions warning */}
+                  {/* Orphaned warning banner */}
                   {orphanedScalpPositions.length > 0 && (
                     <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 6, background: 'rgba(245,158,11,.08)', border: '1px solid rgba(245,158,11,.2)', fontSize: 11, color: '#f59e0b', fontFamily: 'var(--font-mono)' }}>
-                      ⚠ {orphanedScalpPositions.length} orphaned record{orphanedScalpPositions.length > 1 ? 's' : ''} — engine restarted without closing these positions. No live Alpaca exposure.
+                      ⚠ {orphanedScalpPositions.length} orphaned — engine restarted without closing. No live Alpaca exposure.
                     </div>
                   )}
 
-                  {validScalpPositions.length === 0 && orphanedScalpPositions.length === 0 ? (
+                  {scalpPositions.length === 0 ? (
                     <div style={{ color: 'var(--ink-3)', fontSize: 13, padding: '20px 0', textAlign: 'center' }}>No open scalp positions</div>
-                  ) : validScalpPositions.length === 0 ? (
-                    <div style={{ color: 'var(--ink-3)', fontSize: 13, padding: '10px 0', textAlign: 'center' }}>No active positions</div>
                   ) : (
                     <>
                       <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
@@ -643,16 +640,21 @@ export default function TradingPage() {
                       </table>
                       <div style={{ overflowY: 'auto', maxHeight: 280 }}>
                         <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
-                          <tbody>{validScalpPositions.map((p: any) => (
-                            <tr key={p.id} style={{ borderBottom: '1px solid rgba(160,195,255,.05)' }}>
-                              <td style={{ padding: '8px 10px 8px 0', fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--ice)', width: '20%' }}>{p.symbol}</td>
-                              <td style={{ paddingRight: 10, color: p.direction === 'long' ? '#22c55e' : '#ef4444', fontFamily: 'var(--font-mono)', width: '10%' }}>{p.direction === 'long' ? '↑' : '↓'}</td>
-                              <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)', width: '10%' }}>{p.qty}</td>
-                              <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)', width: '20%' }}>${fmt(p.entry_price)}</td>
-                              <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', color: '#22c55e', width: '20%' }}>${fmt(p.target)}</td>
-                              <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: '#ef4444', width: '20%' }}>${fmt(p.stop)}</td>
-                            </tr>
-                          ))}</tbody>
+                          <tbody>{scalpPositions.map((p: any) => {
+                            const isOrphaned = p.target == null || p.stop == null
+                            return (
+                              <tr key={p.id} style={{ borderBottom: '1px solid rgba(160,195,255,.05)', background: isOrphaned ? 'rgba(245,158,11,.04)' : undefined }}>
+                                <td style={{ padding: '8px 10px 8px 0', fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--ice)', width: '20%' }}>
+                                  {p.symbol}{isOrphaned && <span style={{ marginLeft: 5, fontSize: 9, color: '#f59e0b' }}>⚠</span>}
+                                </td>
+                                <td style={{ paddingRight: 10, color: p.direction === 'long' ? '#22c55e' : '#ef4444', fontFamily: 'var(--font-mono)', width: '10%' }}>{p.direction === 'long' ? '↑' : '↓'}</td>
+                                <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)', width: '10%' }}>{p.qty}</td>
+                                <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-2)', width: '20%' }}>${fmt(p.entry_price)}</td>
+                                <td style={{ textAlign: 'right', paddingRight: 10, fontFamily: 'var(--font-mono)', color: isOrphaned ? 'var(--ink-3)' : '#22c55e', width: '20%' }}>{isOrphaned ? '—' : `$${fmt(p.target)}`}</td>
+                                <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: isOrphaned ? 'var(--ink-3)' : '#ef4444', width: '20%' }}>{isOrphaned ? '—' : `$${fmt(p.stop)}`}</td>
+                              </tr>
+                            )
+                          })}</tbody>
                         </table>
                       </div>
                     </>

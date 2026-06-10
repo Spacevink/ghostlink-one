@@ -35,6 +35,12 @@ function timeAgo(dateStr: string) {
   return `${Math.floor(diff / 86400)}d ago`
 }
 
+function getLS(key: string, fallback: boolean): boolean {
+  if (typeof window === 'undefined') return fallback
+  const v = localStorage.getItem(key)
+  return v === null ? fallback : v === 'true'
+}
+
 function ScalpEquityChart({ snapshots }: { snapshots: any[] }) {
   if (!snapshots.length) return (
     <div style={{ height: 110, display: 'grid', placeItems: 'center', color: 'var(--ink-3)', fontSize: 13 }}>
@@ -80,8 +86,13 @@ export default function TradingPage() {
   const [scalpSnaps,     setScalpSnaps]     = useState<any[]>([])
   const [scalpPositions, setScalpPositions] = useState<any[]>([])
   const [scalpTrades,    setScalpTrades]    = useState<any[]>([])
-  const [statarbOpen,    setStatarbOpen]    = useState(true)
-  const [scalpOpen,      setScalpOpen]      = useState(true)
+
+  // Toggle state — persisted in localStorage so position survives refresh/navigation
+  const [statarbOpen, setStatarbOpen] = useState<boolean>(() => getLS('gl-statarb-open', true))
+  const [scalpOpen,   setScalpOpen]   = useState<boolean>(() => getLS('gl-scalp-open',   true))
+
+  useEffect(() => { localStorage.setItem('gl-statarb-open', String(statarbOpen)) }, [statarbOpen])
+  useEffect(() => { localStorage.setItem('gl-scalp-open',   String(scalpOpen))   }, [scalpOpen])
 
   const refresh = useCallback(async () => {
     const [s, p, t, rh, hb, sa, sh, ssn, spo, stc] = await Promise.all([
@@ -115,6 +126,7 @@ export default function TradingPage() {
 
   useEffect(() => {
     refresh()
+    // Supabase Realtime — instant updates on any table change
     const ch = trading.channel('trading-dash')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'portfolio_snapshots' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'positions' }, refresh)
@@ -126,17 +138,16 @@ export default function TradingPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'scalp_trades' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'scalp_equity_snapshots' }, refresh)
       .subscribe()
-    return () => { trading.removeChannel(ch) }
+    // 30s polling fallback — catches any missed realtime events
+    const poll = setInterval(refresh, 30000)
+    return () => { trading.removeChannel(ch); clearInterval(poll) }
   }, [refresh])
 
   // ── Derived values ──────────────────────────────────────────────────────────
   const latest      = snapshots.at(-1)
-  // Portfolio value: live from heartbeat (Alpaca equity), fallback to snapshot
   const portValue   = heartbeat?.equity ?? latest?.portfolio_value ?? null
-  // Total P&L: live equity minus paper start — always accurate, no trade log needed
   const totalPnl    = portValue != null ? Math.round((portValue - PAPER_START) * 100) / 100 : null
   const totalPnlPct = portValue != null ? Math.round((portValue - PAPER_START) / PAPER_START * 10000) / 100 : null
-  // Today P&L: from heartbeat (equity − last_equity)
   const todayPnl    = heartbeat?.today_pnl    ?? null
   const todayPnlPct = heartbeat?.today_pnl_pct ?? null
   const hbUpdatedAt = heartbeat?.created_at ? new Date(heartbeat.created_at) : null
@@ -536,7 +547,7 @@ export default function TradingPage() {
                         <tbody>{shadowTrades.map(row => {
                           const rcfg = REGIME_CONFIG[row.regime_label] ?? REGIME_CONFIG.initialising
                           return (
-                            <tr key={row.id} style={{ borderBottom: '1px solid rgba(160,195,255,.05)' }}>
+                            <tr key={row.id} style={{ borderBottom: '1px solid rgba(160,195,255,.05)' }}> 
                               <td style={{ padding: '7px 10px 7px 0', color: 'var(--ink-3)', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>{new Date(row.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</td>
                               <td style={{ paddingRight: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink)' }}>{row.sym1}/{row.sym2}</td>
                               <td style={{ paddingRight: 10, color: row.direction === 'long_spread' ? '#22c55e' : '#ef4444' }}>{row.direction === 'long_spread' ? '↑' : '↓'}</td>

@@ -76,6 +76,8 @@ function ScalpEquityChart({ snapshots }: { snapshots: any[] }) {
   )
 }
 
+const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL ?? 'http://192.168.1.121:8000'
+
 export default function TradingPage() {
   const router = useRouter()
   const [snapshots,      setSnapshots]      = useState<any[]>([])
@@ -94,6 +96,8 @@ export default function TradingPage() {
 
   const [statarbOpen, setStatarbOpen] = useState<boolean>(() => getLS('gl-statarb-open', true))
   const [scalpOpen,   setScalpOpen]   = useState<boolean>(() => getLS('gl-scalp-open',   true))
+  const [syncing,     setSyncing]     = useState(false)
+  const [syncMsg,     setSyncMsg]     = useState<string | null>(null)
 
   useEffect(() => { localStorage.setItem('gl-statarb-open', String(statarbOpen)) }, [statarbOpen])
   useEffect(() => { localStorage.setItem('gl-scalp-open',   String(scalpOpen))   }, [scalpOpen])
@@ -125,6 +129,28 @@ export default function TradingPage() {
     setLastUpdated(new Date())
     setLoading(false)
   }, [])
+
+  const syncWithAlpaca = async () => {
+    setSyncing(true)
+    setSyncMsg(null)
+    try {
+      const res = await fetch(`${ENGINE_URL}/scalp/sync-positions`, { method: 'POST' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      if (data.error) {
+        setSyncMsg(`Error: ${data.error}`)
+      } else {
+        const ins = data.inserted?.length ?? 0
+        const cls = data.closed?.length ?? 0
+        setSyncMsg(ins === 0 && cls === 0 ? 'Alpaca in sync ✓' : `Synced · ${ins} inserted · ${cls} closed`)
+        await refresh()
+      }
+    } catch (e: any) {
+      setSyncMsg(`Could not reach engine (${e.message})`)
+    } finally {
+      setSyncing(false)
+    }
+  }
 
   useEffect(() => {
     refresh()
@@ -584,7 +610,21 @@ export default function TradingPage() {
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
                 <div style={{ padding: '18px 24px', borderRight: '1px solid var(--edge)' }}>
-                  <div className="eyebrow" style={{ marginBottom: 12, fontSize: 10 }}>Open Scalp Positions</div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                    <div className="eyebrow" style={{ margin: 0, fontSize: 10 }}>Open Scalp Positions</div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); syncWithAlpaca() }}
+                      disabled={syncing}
+                      style={{ background: 'none', border: '1px solid rgba(160,195,255,.18)', borderRadius: 4, color: syncing ? 'var(--ink-3)' : 'var(--ice)', cursor: syncing ? 'not-allowed' : 'pointer', fontSize: 10, fontFamily: 'var(--font-mono)', padding: '3px 9px', letterSpacing: '.07em' }}
+                    >
+                      {syncing ? '⟳ syncing…' : '↻ Sync Alpaca'}
+                    </button>
+                  </div>
+                  {syncMsg && (
+                    <div style={{ fontSize: 11, color: syncMsg.startsWith('Error') || syncMsg.startsWith('Could') ? '#ef4444' : '#22c55e', marginBottom: 10, fontFamily: 'var(--font-mono)' }}>
+                      {syncMsg}
+                    </div>
+                  )}
 
                   {scalpPositions.length === 0 ? (
                     <div style={{ color: 'var(--ink-3)', fontSize: 13, padding: '20px 0', textAlign: 'center' }}>No open scalp positions</div>
